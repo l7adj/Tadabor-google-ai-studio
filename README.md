@@ -1,11 +1,82 @@
-<div align="center">
+# بيئة التدبّر والبحث القرآني | Quranic Reflection & Advanced Search Studio
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+تطبيق ويب متكامل للبحث والتدبّر القرآني بدقة تضاهي محركات البحث التخصصية، مع لوحة خرائط مفاهيمية تفاعلية، وتوليد وتلوين الكلمات حسب الأنماط الصرفية والرسم العثماني.
 
-  <h1>Built with AI Studio</h2>
+---
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## ✨ المميزات الرئيسية
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+1. **محرك بحث قرآني فائق الدقة (Quranic Search Engine):**
+   - **بحث حرفي وتضميني (Substring & Character Matching):** يبحث عن أي حرف أو مقطع مع تسوية دقيقة للرسم العثماني (مثل الألف الخنجرية في `ٱلصَّلَوٰةَ` والياء في `إِبۡرَٰهِـۧمَ`).
+   - **بحث بالجذر اللغوي:** استكشاف جميع مشتقات الكلمة القرآنية عبر الجذور الثلاثية والرباعية.
+   - **بحث دلالي وموضوعي:** استخراج الآيات حسب المعنى والموضوع.
+   - **تصفية متقدمة:** حسب السورة، الجزء، نوع النزول (مكي / مدني)، ونوع المطابقة.
+   - **تلوين الآيات:** تمييز فوري للكلمات المطابقة بألوان متعددة (عنبري، زمردي، ياقوتي، أزرق، نيلي) مع الاحتفاظ بالرسم العثماني لحفص عن عاصم.
 
-</div>
+2. **لوحة الخرائط المفاهيمية والذهنية (Mind Map Studio):**
+   - مساحة عمل تفاعلية لا نهائية لربط الآيات واستخراج الدلالات واللطائف التفسيرية.
+   - إضافة روابط ملونة وملاحظات بين الآيات.
+
+3. **وضع العرض الهادئ (Presentation / Zen Mode):**
+   - واجهة مريحة ومخصصة للقراءة والتدبر بدون مشتتات بصرية.
+
+---
+
+## 🛠️ التقنيات المستخدمة
+
+- **Frontend:** React 18, TypeScript, Tailwind CSS
+- **Animations:** Motion (Framer Motion)
+- **Icons:** Lucide React
+- **Data:** مصحف المدينة النبوية بالرسم العثماني (Uthmani Script) مع الضبط التام
+
+---
+
+## 🚀 طريقة التشغيل محلياً (Local Development)
+
+### المتطلبات:
+- Node.js (الإصدار 18 أو أحدث)
+- npm أو pnpm أو yarn
+
+### خطوات التشغيل:
+
+1. **تثبيت الحزم:**
+```bash
+npm install
+```
+
+2. **بدء خادم التطوير:**
+```bash
+npm run dev
+```
+سيعمل التطبيق على الرابط المحلي: `http://localhost:3000`
+
+3. **بناء النسخة الإنتاجية (Production Build):**
+```bash
+npm run build
+```
+
+---
+
+## 📦 رفع المشروع على GitHub
+
+يمكنك ربط المشروع ورفعه على حسابك في GitHub باتباع الخطوات التالية:
+
+```bash
+# 1. تهيئة مستودع Git
+git init
+
+# 2. إضافة جميع الملفات
+git add .
+
+# 3. تسجيل التغييرات (Commit)
+git commit -m "Initial commit - Quranic Reflection App"
+
+# 4. تعيين الفرع الرئيسي
+git branch -M main
+
+# 5. ربط المستودع البعيد (استبدل الرابط برابط مستودعك الجديد على GitHub)
+git remote add origin https://github.com/USERNAME/REPOSITORY_NAME.git
+
+# 6. الرفع إلى GitHub
+git push -u origin main
+```

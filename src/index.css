@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: 'KFGQPC Uthmanic Script HAFS';
+  src: url('/fonts/uthmanic_hafs_v22.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'UthmanicHafs';
+  src: url('/fonts/UthmanicHafs.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'UthmanTN';
+  src: url('/fonts/UthmanTN.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  body {
+    font-family: 'Tajawal', 'Cairo', system-ui, -apple-system, sans-serif;
+  }
+}
+
+.font-quran {
+  font-family: 'KFGQPC Uthmanic Script HAFS', 'UthmanicHafs', 'UthmanTN', 'Amiri Quran', 'Amiri', serif;
+  line-height: 2.3;
+  font-feature-settings: "liga" 1, "calt" 1, "ccmp" 1;
+  text-rendering: optimizeLegibility;
+}
+
+.font-amiri {
+  font-family: 'Amiri', serif;
+}
+
+.font-cairo {
+  font-family: 'Cairo', sans-serif;
+}
+
+.font-tajawal {
+  font-family: 'Tajawal', sans-serif;
+}
+
+/* Canvas grid patterns */
+.bg-canvas-dots {
+  background-image: radial-gradient(circle, #cbd5e1 1.2px, transparent 1.2px);
+}
+
+.bg-canvas-lines {
+  background-image: 
+    linear-gradient(to right, rgba(203, 213, 225, 0.4) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(203, 213, 225, 0.4) 1px, transparent 1px);
+}
+
+.bg-canvas-islamic {
+  background-color: #fafaf9;
+  background-image: radial-gradient(#d6d3d1 0.85px, transparent 0.85px), radial-gradient(#d6d3d1 0.85px, #fafaf9 0.85px);
+  background-size: 28px 28px;
+  background-position: 0 0, 14px 14px;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+
+/* Custom smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
