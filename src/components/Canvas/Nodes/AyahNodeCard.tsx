@@ -15,6 +15,12 @@ import {
 } from 'lucide-react';
 import { CanvasNode, WordAnnotation, HandlePosition, QuranAnchor } from '../../../types';
 import { extractAyahWords, cleanSurahName, extractWordLetters } from '../../../lib/arabicUtils';
+import {
+  createAyahAnchor,
+  createWordAnchor,
+  createWordRangeAnchor,
+  createCharAnchor
+} from '../../../lib/quranAnchors';
 import { WordAnnotationPopover } from './WordAnnotationPopover';
 
 interface AyahNodeCardProps {
@@ -278,41 +284,49 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
     }
   };
 
-  const getAyahAnchor = (wIndex?: number, wText?: string, charIndex?: number): QuranAnchor => {
+  const getAyahAnchor = (
+    wIndex?: number,
+    wText?: string,
+    charIndex?: number,
+    charText?: string,
+    endWordIndex?: number
+  ): QuranAnchor => {
     if (charIndex !== undefined && wIndex !== undefined) {
-      return {
+      return createCharAnchor({
         surah: surahNumber,
         ayah: ayahNumberInSurah,
-        level: 'char',
+        wordIndex: wIndex,
+        charIndex,
+        charText: charText || wText || '',
+        wordText: wText,
+        surahName: cleanSurahName(surahName)
+      });
+    }
+    if (endWordIndex !== undefined && wIndex !== undefined && endWordIndex > wIndex) {
+      return createWordRangeAnchor({
+        surah: surahNumber,
+        ayah: ayahNumberInSurah,
         startWord: wIndex,
-        endWord: wIndex,
-        startChar: charIndex,
-        endChar: charIndex,
-        text: wText || '',
-        surahName: cleanSurahName(surahName),
-        ayahNumberInSurah
-      };
+        endWord: endWordIndex,
+        phraseText: wText || '',
+        surahName: cleanSurahName(surahName)
+      });
     }
     if (wIndex !== undefined) {
-      return {
+      return createWordAnchor({
         surah: surahNumber,
         ayah: ayahNumberInSurah,
-        level: 'word',
-        startWord: wIndex,
-        endWord: wIndex,
-        text: wText || '',
-        surahName: cleanSurahName(surahName),
-        ayahNumberInSurah
-      };
+        wordIndex: wIndex,
+        wordText: wText || '',
+        surahName: cleanSurahName(surahName)
+      });
     }
-    return {
+    return createAyahAnchor({
       surah: surahNumber,
       ayah: ayahNumberInSurah,
-      level: 'ayah',
       text: textUthmani,
-      surahName: cleanSurahName(surahName),
-      ayahNumberInSurah
-    };
+      surahName: cleanSurahName(surahName)
+    });
   };
 
   return (
@@ -760,15 +774,35 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                         return (
                           <span
                             key={ltr.charIndex}
+                            id={`ayah-char-${node.id}-${w.index}-${ltr.charIndex}`}
+                            onClick={(e) => {
+                              if (isConnectingMode && onCompleteConnecting) {
+                                e.stopPropagation();
+                                const charAnchor = getAyahAnchor(
+                                  w.index,
+                                  w.uthmani,
+                                  ltr.charIndex,
+                                  ltr.displayWithMarks
+                                );
+                                onCompleteConnecting(
+                                  node.id,
+                                  undefined,
+                                  w.index,
+                                  `حرف «${ltr.displayWithMarks}» في (${w.uthmani})`,
+                                  charAnchor
+                                );
+                              }
+                            }}
                             className={`relative inline-block transition-all ${
                               isTargetChar ? 'px-1 rounded-full' : ''
-                            }`}
+                            } ${isConnectingMode ? 'hover:scale-125 cursor-crosshair hover:bg-emerald-200/60 rounded' : ''}`}
                             style={{
                               border: isTargetChar ? `2px solid ${annotation?.color}` : undefined,
                               backgroundColor: isTargetChar ? `${annotation?.color}25` : undefined,
                               color: isTargetChar ? annotation?.color : undefined,
                               fontWeight: isTargetChar ? 700 : undefined
                             }}
+                            title={isConnectingMode ? `ربط إلى حرف «${ltr.displayWithMarks}»` : undefined}
                           >
                             {ltr.displayWithMarks}
                           </span>
@@ -808,13 +842,13 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                     currentAnnotation={annotation}
                     onSaveAnnotation={handleSaveAnnotation}
                     onRemoveAnnotation={handleRemoveAnnotation}
-                    onStartConnectionFromWord={(idx, designatedText) =>
+                    onStartConnectionFromWord={(idx, designatedText, charIndex, charText, endWordIndex) =>
                       onStartConnecting(
                         node.id,
                         idx,
                         undefined,
                         designatedText,
-                        getAyahAnchor(idx, designatedText, annotation.charIndex)
+                        getAyahAnchor(idx, designatedText, charIndex, charText, endWordIndex)
                       )
                     }
                     onClose={() => setActiveWordIndex(null)}

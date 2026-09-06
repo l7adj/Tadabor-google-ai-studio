@@ -587,23 +587,26 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       return;
     }
 
-    // If source and target are exact same word on exact same node, cancel
-    if (
-      connectingSource.nodeId === targetNodeId &&
-      connectingSource.wordIndex !== undefined &&
-      connectingSource.wordIndex === targetWordIndex
-    ) {
-      setConnectingSource(null);
-      return;
-    }
-
-    // If same node without words designated on both sides, cancel
-    if (
-      connectingSource.nodeId === targetNodeId &&
-      (connectingSource.wordIndex === undefined || targetWordIndex === undefined)
-    ) {
-      setConnectingSource(null);
-      return;
+    // If source and target are on exact same node:
+    if (connectingSource.nodeId === targetNodeId) {
+      // If neither side has a designated word, cancel (cannot link whole card to itself)
+      if (connectingSource.wordIndex === undefined && targetWordIndex === undefined) {
+        setConnectingSource(null);
+        return;
+      }
+      // If exact same word on same node:
+      if (
+        connectingSource.wordIndex !== undefined &&
+        connectingSource.wordIndex === targetWordIndex
+      ) {
+        const srcChar = connectingSource.anchor?.charIndex ?? connectingSource.anchor?.startChar;
+        const tgtChar = targetAnchor?.charIndex ?? targetAnchor?.startChar;
+        // Only allow if connecting two distinct characters within the word
+        if (srcChar === undefined || tgtChar === undefined || srcChar === tgtChar) {
+          setConnectingSource(null);
+          return;
+        }
+      }
     }
 
     const isSameNode = connectingSource.nodeId === targetNodeId;

@@ -1,4 +1,5 @@
 import { QuranAnchor, QuranAnchorLevel, RelationshipKind, RelationshipDefinition } from '../types';
+import { formatQuranAnchorLabel } from './quranSelectionEngine';
 
 export const RELATIONSHIP_DEFINITIONS: Record<RelationshipKind, RelationshipDefinition> = {
   cause: {
@@ -149,8 +150,10 @@ export const RELATIONSHIP_DEFINITIONS: Record<RelationshipKind, RelationshipDefi
 
 export const RELATIONSHIP_LIST: RelationshipDefinition[] = Object.values(RELATIONSHIP_DEFINITIONS);
 
+export * from './quranSelectionEngine';
+
 /**
- * Creates a standard QuranAnchor structure
+ * Creates a standard QuranAnchor structure (v1 and v2 compatible)
  */
 export function createQuranAnchor(options: {
   surah: number;
@@ -159,46 +162,35 @@ export function createQuranAnchor(options: {
   text: string;
   startWord?: number;
   endWord?: number;
+  wordIndex?: number;
+  endWordIndex?: number;
   startChar?: number;
   endChar?: number;
+  charIndex?: number;
+  charText?: string;
   surahName?: string;
 }): QuranAnchor {
+  const wIdx = options.wordIndex ?? options.startWord;
+  const ewIdx = options.endWordIndex ?? options.endWord ?? wIdx;
+  const cIdx = options.charIndex ?? options.startChar;
+  const ecIdx = options.endChar ?? cIdx;
+
   return {
     surah: options.surah,
     ayah: options.ayah,
     level: options.level,
     text: options.text.trim(),
-    startWord: options.startWord,
-    endWord: options.endWord ?? options.startWord,
-    startChar: options.startChar,
-    endChar: options.endChar,
+    startWord: wIdx,
+    endWord: ewIdx,
+    wordIndex: wIdx,
+    endWordIndex: ewIdx,
+    startChar: cIdx,
+    endChar: ecIdx,
+    charIndex: cIdx,
+    charText: options.charText,
     surahName: options.surahName,
     ayahNumberInSurah: options.ayah
   };
-}
-
-/**
- * Format a human-readable title for a QuranAnchor
- * e.g., "سورة البقرة: 255 (كلمة: ٱللَّهُ)"
- */
-export function formatQuranAnchorLabel(anchor?: QuranAnchor): string {
-  if (!anchor) return '';
-  const surahPart = anchor.surahName ? `سورة ${anchor.surahName}` : `سورة ${anchor.surah}`;
-  const ayahPart = `آية ${anchor.ayah}`;
-
-  switch (anchor.level) {
-    case 'char':
-      return `${surahPart} [${ayahPart}] • حرف «${anchor.text}»`;
-    case 'word':
-      return `${surahPart} [${ayahPart}] • كلمة «${anchor.text}»`;
-    case 'word_range':
-      return `${surahPart} [${ayahPart}] • مقطع «${anchor.text}»`;
-    case 'surah':
-      return `${surahPart} (كامل السورة)`;
-    case 'ayah':
-    default:
-      return `${surahPart} [${ayahPart}]`;
-  }
 }
 
 export const formatAnchorReference = formatQuranAnchorLabel;

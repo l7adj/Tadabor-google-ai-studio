@@ -95,23 +95,39 @@ export type NodeType = 'ayah' | 'note' | 'image' | 'concept' | 'group';
 export type QuranAnchorLevel =
   | 'surah'        // سورة كاملة
   | 'ayah'         // آية كاملة
+  | 'ayah_range'   // عدة آيات
   | 'word_range'   // مقطع كلمات متتابعة
   | 'word'         // كلمة مفردة
-  | 'char_range'   // عدة أحرف
-  | 'char';        // حرف مفرد
+  | 'char_range'   // نطاق أحرف داخل كلمة
+  | 'char'         // حرف مفرد داخل كلمة
+  | 'multi';       // تحديد مركب / غير متجاور
 
 export interface QuranAnchor {
+  id?: string;
   surah: number;
   ayah: number;
+  surahId?: number;
+  ayahId?: number;
+  endAyah?: number;
   level: QuranAnchorLevel;
   startWord?: number;
   endWord?: number;
+  wordIndex?: number;
+  endWordIndex?: number;
   startChar?: number;
   endChar?: number;
+  charIndex?: number;
+  endCharIndex?: number;
+  charText?: string;
   text: string;
+  normalizedText?: string;
   surahName?: string;
   ayahNumberInSurah?: number;
+  subAnchors?: QuranAnchor[];
+  domTargetId?: string;
 }
+
+export type QuranAnchorV2 = QuranAnchor;
 
 export type RelationshipKind =
   | 'cause'          // سبب (علة وموجب)

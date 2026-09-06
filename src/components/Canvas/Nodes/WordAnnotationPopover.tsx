@@ -23,7 +23,13 @@ interface WordAnnotationPopoverProps {
   currentAnnotation: WordAnnotation;
   onSaveAnnotation: (annotation: WordAnnotation) => void;
   onRemoveAnnotation: (wordIndex: number) => void;
-  onStartConnectionFromWord: (wordIndex: number, designatedText?: string) => void;
+  onStartConnectionFromWord: (
+    wordIndex: number,
+    designatedText?: string,
+    charIndex?: number,
+    charText?: string,
+    endWordIndex?: number
+  ) => void;
   onClose: () => void;
 }
 
@@ -181,14 +187,26 @@ export const WordAnnotationPopover: React.FC<WordAnnotationPopoverProps> = ({
       {/* Main Link Action Button - Prominent & Top Priority */}
       <button
         onClick={() => {
-          onStartConnectionFromWord(wordIndex, designatedText);
+          onStartConnectionFromWord(
+            wordIndex,
+            designatedText,
+            selectedChar.index,
+            selectedChar.text,
+            endWordIndex
+          );
           onClose();
         }}
         className="w-full mb-3 flex items-center justify-center gap-2 py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white rounded-xl font-bold font-cairo text-xs shadow-md shadow-emerald-900/20 active:scale-98 transition-all"
         title="انقر ثم حدد حرفاً أو كلمة أو آية أخرى لربطها فوراً"
       >
         <Link className="w-4 h-4 text-emerald-200" />
-        <span>ربط بحرف أو كلمة أو آية أخرى</span>
+        <span>
+          {selectedChar.text
+            ? `ربط الحرف «${selectedChar.text}» بسهم رابط`
+            : endWordIndex && endWordIndex > wordIndex
+            ? `ربط المقطع «${designatedText}» بسهم رابط`
+            : `ربط الكلمة «${wordText}» بسهم رابط`}
+        </span>
       </button>
 
       {/* Multi-Word Expansion (كلمتين أو أكثر) */}

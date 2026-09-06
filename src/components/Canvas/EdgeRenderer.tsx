@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CanvasEdge, CanvasNode, HandlePosition, RelationshipKind } from '../../types';
+import { CanvasEdge, CanvasNode, HandlePosition, QuranAnchor, RelationshipKind } from '../../types';
 import { Trash2, Edit2, Check, Sparkles, SlidersHorizontal, Activity } from 'lucide-react';
 import { RELATIONSHIP_LIST, formatAnchorReference } from '../../lib/quranAnchors';
 
@@ -35,9 +35,9 @@ function getNodeHeight(node: CanvasNode): number {
 export function getPreciseNodeAnchor(
   node: CanvasNode,
   handle: HandlePosition,
-  wordIndex?: number,
+  anchorOrWordIndex?: number | QuranAnchor,
   preferVerticalDirection?: 'top' | 'bottom' | 'center'
-): { x: number; y: number; isWordAnchor: boolean } {
+): { x: number; y: number; isWordAnchor: boolean; isCharAnchor?: boolean } {
   let width = node.width || (node.type === 'group' ? 680 : 400);
   let height = getNodeHeight(node);
 
@@ -50,9 +50,46 @@ export function getPreciseNodeAnchor(
     }
   }
 
+  let wordIndex: number | undefined;
+  let charIndex: number | undefined;
+  let isCharLevel = false;
+
+  if (typeof anchorOrWordIndex === 'number') {
+    wordIndex = anchorOrWordIndex;
+  } else if (anchorOrWordIndex && typeof anchorOrWordIndex === 'object') {
+    wordIndex = anchorOrWordIndex.wordIndex ?? anchorOrWordIndex.startWord;
+    charIndex = anchorOrWordIndex.charIndex ?? anchorOrWordIndex.startChar;
+    isCharLevel = (anchorOrWordIndex.level === 'char' || anchorOrWordIndex.level === 'char_range') && charIndex !== undefined;
+  }
+
   if (wordIndex !== undefined && node.type === 'ayah') {
-    // 1. Try to locate the exact DOM element of the word in real-time
     if (typeof document !== 'undefined') {
+      // 1. Precise character element measurement if this is a char anchor
+      if (isCharLevel && charIndex !== undefined) {
+        const charEl = document.getElementById(`ayah-char-${node.id}-${wordIndex}-${charIndex}`);
+        if (charEl && cardEl) {
+          const cardRect = cardEl.getBoundingClientRect();
+          const charRect = charEl.getBoundingClientRect();
+          if (cardRect.width > 0 && width > 0) {
+            const zoomScale = cardRect.width / width;
+            const relX = (charRect.left + charRect.width / 2 - cardRect.left) / zoomScale;
+            let relY = (charRect.top + charRect.height / 2 - cardRect.top) / zoomScale;
+            if (preferVerticalDirection === 'top') {
+              relY = (charRect.top - cardRect.top) / zoomScale - 4;
+            } else if (preferVerticalDirection === 'bottom') {
+              relY = (charRect.bottom - cardRect.top) / zoomScale + 4;
+            }
+            return {
+              x: node.x + relX,
+              y: node.y + relY,
+              isWordAnchor: true,
+              isCharAnchor: true
+            };
+          }
+        }
+      }
+
+      // 2. Locate the exact DOM element of the word in real-time
       const wordEl = document.getElementById(`ayah-word-${node.id}-${wordIndex}`);
 
       if (wordEl && cardEl) {
@@ -73,7 +110,8 @@ export function getPreciseNodeAnchor(
           return {
             x: node.x + relX,
             y: node.y + relY,
-            isWordAnchor: true
+            isWordAnchor: true,
+            isCharAnchor: false
           };
         }
       }
@@ -98,7 +136,8 @@ export function getPreciseNodeAnchor(
     return {
       x: fallbackX,
       y: fallbackY,
-      isWordAnchor: true
+      isWordAnchor: true,
+      isCharAnchor: false
     };
   }
 
@@ -182,8 +221,8 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
   const sVerticalPref = isSameNode ? 'top' : undefined;
   const tVerticalPref = isSameNode ? 'top' : undefined;
 
-  const sCoord = getPreciseNodeAnchor(sourceNode, sHandle, edge.sourceWordIndex, sVerticalPref);
-  const tCoord = getPreciseNodeAnchor(targetNode, tHandle, edge.targetWordIndex, tVerticalPref);
+  const sCoord = getPreciseNodeAnchor(sourceNode, sHandle, edge.sourceAnchor || edge.sourceWordIndex, sVerticalPref);
+  const tCoord = getPreciseNodeAnchor(targetNode, tHandle, edge.targetAnchor || edge.targetWordIndex, tVerticalPref);
 
   const sX = sCoord.x;
   const sY = sCoord.y;
