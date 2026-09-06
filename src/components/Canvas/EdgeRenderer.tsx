@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { CanvasEdge, CanvasNode, HandlePosition } from '../../types';
+import { CanvasEdge, CanvasNode, HandlePosition, RelationshipKind } from '../../types';
 import { Trash2, Edit2, Check, Sparkles, SlidersHorizontal, Activity } from 'lucide-react';
+import { RELATIONSHIP_LIST, formatAnchorReference } from '../../lib/quranAnchors';
 
 interface EdgeRendererProps {
   edge: CanvasEdge;
@@ -11,15 +12,12 @@ interface EdgeRendererProps {
   readOnly?: boolean;
 }
 
-const RELATIONSHIP_PRESETS = [
-  { label: 'علاقة سببية (علة وجزاء)', color: '#10b981', category: 'cause' },
-  { label: 'مقابلة وتضاد', color: '#f43f5e', category: 'contrast' },
-  { label: 'تناسب ومشاكلة لفظية', color: '#8b5cf6', category: 'parallel' },
-  { label: 'تفسير وبيان', color: '#3b82f6', category: 'tafsir' },
-  { label: 'تخصيص بعد تعميم', color: '#06b6d4', category: 'detail' },
-  { label: 'استدلال وبرهان', color: '#d97706', category: 'proof' },
-  { label: 'لطيفة بلاغية', color: '#ec4899', category: 'rhetoric' }
-];
+const RELATIONSHIP_PRESETS = RELATIONSHIP_LIST.map((def) => ({
+  kind: def.kind,
+  label: def.label,
+  color: def.color,
+  category: def.shortLabel
+}));
 
 const COLOR_PALETTE = ['#10b981', '#f59e0b', '#3b82f6', '#8b5cf6', '#ec4899', '#64748b'];
 
@@ -40,28 +38,36 @@ export function getPreciseNodeAnchor(
   wordIndex?: number,
   preferVerticalDirection?: 'top' | 'bottom' | 'center'
 ): { x: number; y: number; isWordAnchor: boolean } {
-  const width = node.width || (node.type === 'group' ? 680 : 400);
-  const height = getNodeHeight(node);
+  let width = node.width || (node.type === 'group' ? 680 : 400);
+  let height = getNodeHeight(node);
+
+  let cardEl: HTMLElement | null = null;
+  if (typeof document !== 'undefined') {
+    cardEl = document.getElementById(`node-card-${node.id}`);
+    if (cardEl) {
+      if (cardEl.offsetWidth > 0) width = cardEl.offsetWidth;
+      if (cardEl.offsetHeight > 0) height = cardEl.offsetHeight;
+    }
+  }
 
   if (wordIndex !== undefined && node.type === 'ayah') {
     // 1. Try to locate the exact DOM element of the word in real-time
     if (typeof document !== 'undefined') {
       const wordEl = document.getElementById(`ayah-word-${node.id}-${wordIndex}`);
-      const cardEl = document.getElementById(`node-card-${node.id}`);
 
       if (wordEl && cardEl) {
         const cardRect = cardEl.getBoundingClientRect();
         const wordRect = wordEl.getBoundingClientRect();
 
-        if (cardRect.width > 0) {
-          const scale = cardRect.width / width;
-          const relX = (wordRect.left + wordRect.width / 2 - cardRect.left) / scale;
+        if (cardRect.width > 0 && width > 0) {
+          const zoomScale = cardRect.width / width;
+          const relX = (wordRect.left + wordRect.width / 2 - cardRect.left) / zoomScale;
           
-          let relY = (wordRect.top + wordRect.height / 2 - cardRect.top) / scale;
+          let relY = (wordRect.top + wordRect.height / 2 - cardRect.top) / zoomScale;
           if (preferVerticalDirection === 'top') {
-            relY = (wordRect.top - cardRect.top) / scale - 3;
+            relY = (wordRect.top - cardRect.top) / zoomScale - 4;
           } else if (preferVerticalDirection === 'bottom') {
-            relY = (wordRect.bottom - cardRect.top) / scale + 3;
+            relY = (wordRect.bottom - cardRect.top) / zoomScale + 4;
           }
 
           return {
@@ -254,11 +260,11 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
     setIsEditingLabel(false);
   };
 
-  const handleSelectPreset = (preset: { label: string; color: string; category: string }) => {
+  const handleSelectPreset = (preset: { kind: RelationshipKind; label: string; color: string; category: string }) => {
     onUpdateEdge(edge.id, {
+      relationshipKind: preset.kind,
       label: preset.label,
-      color: preset.color,
-      category: preset.category
+      color: preset.color
     });
     setLabelInput(preset.label);
     setShowSettingsMenu(false);
@@ -267,33 +273,71 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
   const arrowMarkerId = `arrow-${edge.id}`;
   const lineColor = edge.color || '#10b981';
 
+  const sourceNodeTitle =
+    sourceNode.type === 'ayah' && sourceNode.ayahData
+      ? `سورة ${sourceNode.ayahData.surahName} [${sourceNode.ayahData.ayahNumberInSurah}]`
+      : sourceNode.conceptData?.title || sourceNode.noteData?.title || 'عنصر تدبري';
+
+  const targetNodeTitle =
+    targetNode.type === 'ayah' && targetNode.ayahData
+      ? `سورة ${targetNode.ayahData.surahName} [${targetNode.ayahData.ayahNumberInSurah}]`
+      : targetNode.conceptData?.title || targetNode.noteData?.title || 'عنصر تدبري';
+
+  const sourceAnchorRef = edge.sourceAnchor
+    ? formatAnchorReference(edge.sourceAnchor)
+    : edge.sourceWordText
+    ? `«${edge.sourceWordText}»`
+    : sourceNodeTitle;
+
+  const targetAnchorRef = edge.targetAnchor
+    ? formatAnchorReference(edge.targetAnchor)
+    : edge.targetWordText
+    ? `«${edge.targetWordText}»`
+    : targetNodeTitle;
+
   return (
     <g className="group/edge">
       <defs>
         <marker
           id={arrowMarkerId}
-          viewBox="0 0 10 10"
-          refX="7"
-          refY="5"
-          markerWidth="7"
-          markerHeight="7"
+          viewBox="0 0 12 12"
+          refX="9"
+          refY="6"
+          markerWidth="8"
+          markerHeight="8"
           orient="auto-start-reverse"
         >
-          <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill={lineColor} />
+          <path
+            d="M 1 2 L 10 6 L 1 10 z"
+            fill={lineColor}
+            stroke="#ffffff"
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+          />
         </marker>
       </defs>
+
+      {/* High-contrast underlay halo ensuring visibility over any card frame and background */}
+      <path
+        d={pathData}
+        fill="none"
+        stroke="rgba(255, 255, 255, 0.95)"
+        strokeWidth={5}
+        strokeLinecap="round"
+        className="pointer-events-none drop-shadow-sm"
+      />
 
       {/* Invisible wider hit-box path for easy click and hover */}
       <path
         d={pathData}
         fill="none"
         stroke="transparent"
-        strokeWidth={24}
-        className="cursor-pointer"
+        strokeWidth={14}
+        className="cursor-pointer pointer-events-stroke"
         onClick={() => !readOnly && setShowSettingsMenu(!showSettingsMenu)}
       />
 
-      {/* Visible line */}
+      {/* Visible colored line */}
       <path
         d={pathData}
         fill="none"
@@ -308,7 +352,7 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
         }
         markerEnd={edge.arrowType !== 'none' ? `url(#${arrowMarkerId})` : undefined}
         markerStart={edge.arrowType === 'both' ? `url(#${arrowMarkerId})` : undefined}
-        className="transition-all group-hover/edge:stroke-[3.5px]"
+        className="transition-all group-hover/edge:stroke-[3.5px] pointer-events-none"
       />
 
       {/* Optional Animated Pulse Dash */}
@@ -323,31 +367,31 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
         />
       )}
 
-      {/* Connection Endpoint Rings with Word Pin Focus */}
-      {sCoord.isWordAnchor ? (
-        <g className="pointer-events-none">
-          <circle cx={sX} cy={sY} r={8} fill={lineColor} fillOpacity={0.2} className="animate-ping" />
-          <circle cx={sX} cy={sY} r={4.5} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
-        </g>
-      ) : (
-        <circle cx={sX} cy={sY} r={3.5} fill={lineColor} className="pointer-events-none" />
-      )}
+      {/* Source Anchor Pin (نقطة الانطلاق / من) */}
+      <g className="pointer-events-none">
+        <circle cx={sX} cy={sY} r={8} fill={lineColor} fillOpacity={0.25} className="animate-pulse" />
+        <circle cx={sX} cy={sY} r={4.5} fill="#ffffff" stroke={lineColor} strokeWidth={2} />
+        <circle cx={sX} cy={sY} r={2} fill={lineColor} />
+      </g>
 
-      {tCoord.isWordAnchor ? (
-        <g className="pointer-events-none">
-          <circle cx={tX} cy={tY} r={8} fill={lineColor} fillOpacity={0.2} />
-          <circle cx={tX} cy={tY} r={4.5} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
-        </g>
-      ) : (
-        <circle cx={tX} cy={tY} r={3.5} fill={lineColor} className="pointer-events-none" />
-      )}
+      {/* Target Anchor Pin (نقطة الوصول / إلى) */}
+      <g className="pointer-events-none">
+        {tCoord.isWordAnchor ? (
+          <>
+            <circle cx={tX} cy={tY} r={9} fill={lineColor} fillOpacity={0.25} />
+            <circle cx={tX} cy={tY} r={4} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
+          </>
+        ) : (
+          <circle cx={tX} cy={tY} r={4} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
+        )}
+      </g>
 
       {/* Center Label and Action Badge */}
       <foreignObject
-        x={midX - 130}
-        y={midY - 24}
-        width={260}
-        height={80}
+        x={midX - 140}
+        y={midY - 26}
+        width={280}
+        height={85}
         className="overflow-visible pointer-events-auto"
       >
         <div className="flex flex-col items-center justify-center h-full relative" dir="rtl">
@@ -375,32 +419,29 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
             </div>
           ) : (
             <div className="flex items-center gap-1">
-              {edge.label ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!readOnly) setShowSettingsMenu(!showSettingsMenu);
-                  }}
-                  className="bg-white/95 backdrop-blur-md text-stone-900 text-xs font-bold px-3 py-1 rounded-full shadow-md border border-stone-300/90 cursor-pointer hover:border-emerald-500 hover:shadow-lg transition-all font-cairo whitespace-nowrap flex items-center gap-1.5"
-                  style={{ borderRightColor: lineColor, borderRightWidth: '4px' }}
-                  title="انقر لتعديل الرابط أو تغيير نوعه"
-                >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!readOnly) setShowSettingsMenu(!showSettingsMenu);
+                }}
+                className="bg-white/98 backdrop-blur-md text-stone-900 text-xs font-bold px-3 py-1.5 rounded-2xl shadow-lg border border-stone-300/90 cursor-pointer hover:border-emerald-500 hover:shadow-xl transition-all font-cairo whitespace-nowrap flex flex-col items-center gap-0.5"
+                style={{ borderRightColor: lineColor, borderRightWidth: '4px' }}
+                title="انقر لتعديل الرابط أو تغيير نوعه"
+              >
+                <div className="flex items-center gap-1.5">
                   <Sparkles className="w-3 h-3 text-emerald-600" />
-                  <span>{edge.label}</span>
-                </button>
-              ) : (
-                !readOnly && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowSettingsMenu(!showSettingsMenu);
-                    }}
-                    className="opacity-0 group-hover/edge:opacity-100 bg-white/95 backdrop-blur text-stone-700 hover:text-emerald-800 text-[11px] font-bold px-2.5 py-1 rounded-full border border-dashed border-stone-300 shadow-md hover:border-emerald-500 transition-all font-cairo"
-                  >
-                    + تحديد نوع العلاقة
-                  </button>
-                )
-              )}
+                  <span className="text-stone-900 font-bold">{edge.label || 'رابط تدبري'}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-stone-600 font-medium max-w-[260px] truncate dir-rtl">
+                  <span className="text-emerald-800 font-bold bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200/70 truncate max-w-[115px]">
+                    من: {sourceAnchorRef}
+                  </span>
+                  <span className="text-stone-400 font-bold">➔</span>
+                  <span className="text-rose-800 font-bold bg-rose-50 px-1 py-0.5 rounded border border-rose-200/70 truncate max-w-[115px]">
+                    إلى: {targetAnchorRef}
+                  </span>
+                </div>
+              </button>
 
               {/* Quick Delete button on hover */}
               {!readOnly && (

@@ -24,10 +24,11 @@
 
 ## 🛠️ التقنيات المستخدمة
 
-- **Frontend:** React 18, TypeScript, Tailwind CSS
+- **Frontend:** React 19, TypeScript, Tailwind CSS v4, Vite
 - **Animations:** Motion (Framer Motion)
 - **Icons:** Lucide React
-- **Data:** مصحف المدينة النبوية بالرسم العثماني (Uthmani Script) مع الضبط التام
+- **Search Engine:** Deterministic Word-Coordinate Indexed Search with Exact Uthmani Highlighting (wordIndex spans)
+- **Data:** مصحف المدينة النبوية بالرسم العثماني (Uthmani Script) مع الضبط التام لحفص عن عاصم
 
 ---
 

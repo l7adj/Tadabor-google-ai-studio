@@ -37,7 +37,9 @@ import {
   CanvasEdge,
   CanvasGridType,
   HandlePosition,
-  GroupNodeData
+  GroupNodeData,
+  QuranAnchor,
+  RelationshipKind
 } from '../../types';
 import { AyahNodeCard } from './Nodes/AyahNodeCard';
 import { NoteNodeCard } from './Nodes/NoteNodeCard';
@@ -47,6 +49,7 @@ import { GroupNodeCard } from './Nodes/GroupNodeCard';
 import { EdgeRenderer, getPreciseNodeAnchor } from './EdgeRenderer';
 import { CanvasMiniMap } from './CanvasMiniMap';
 import { calculateMindMapLayout } from '../../lib/mindMapLayout';
+import { RelationConfigModal, PendingConnectionData } from './RelationConfigModal';
 
 interface TadabburCanvasProps {
   currentMap: TadabburMap;
@@ -123,7 +126,9 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     wordIndex?: number;
     handle?: HandlePosition;
     wordText?: string;
+    anchor?: QuranAnchor;
   } | null>(null);
+  const [pendingConnection, setPendingConnection] = useState<PendingConnectionData | null>(null);
   const [mouseCanvasPos, setMouseCanvasPos] = useState({ x: 0, y: 0 });
 
   // Mini-map & Modals
@@ -563,17 +568,19 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     nodeId: string,
     wordIndex?: number,
     handle?: HandlePosition,
-    wordText?: string
+    wordText?: string,
+    anchor?: QuranAnchor
   ) => {
     if (readOnly) return;
-    setConnectingSource({ nodeId, wordIndex, handle, wordText });
+    setConnectingSource({ nodeId, wordIndex, handle, wordText, anchor });
   };
 
   const handleCompleteConnection = (
     targetNodeId: string,
     targetHandle?: HandlePosition,
     targetWordIndex?: number,
-    targetWordText?: string
+    targetWordText?: string,
+    targetAnchor?: QuranAnchor
   ) => {
     if (!connectingSource) {
       setConnectingSource(null);
@@ -603,39 +610,85 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     const sourceNode = currentMap.nodes.find((n) => n.id === connectingSource.nodeId);
     const targetNode = currentMap.nodes.find((n) => n.id === targetNodeId);
 
-    // Determine label for the relationship
-    let edgeLabel = 'رابط تدبّري';
-    if (connectingSource.wordText && targetWordText) {
-      edgeLabel = `${connectingSource.wordText} ⟵ ${targetWordText}`;
-    } else if (connectingSource.wordText) {
-      edgeLabel = `من: ${connectingSource.wordText}`;
-    } else if (targetWordText) {
-      edgeLabel = `إلى: ${targetWordText}`;
-    } else if (sourceNode?.type === 'ayah' && targetNode?.type === 'note') {
-      edgeLabel = 'تأمل واستنباط';
-    } else if (sourceNode?.type === 'note' && targetNode?.type === 'ayah') {
-      edgeLabel = 'شاهد قرآني';
-    } else if (sourceNode?.type === 'concept' && targetNode?.type === 'ayah') {
-      edgeLabel = 'آية دالة ومحور';
-    } else if (sourceNode?.type === 'ayah' && targetNode?.type === 'ayah') {
-      edgeLabel = 'تناسب قرآني';
+    // Formulate source anchor
+    let srcAnchor = connectingSource.anchor;
+    if (!srcAnchor && sourceNode?.type === 'ayah' && sourceNode.ayahData) {
+      srcAnchor = {
+        surah: sourceNode.ayahData.surahNumber,
+        ayah: sourceNode.ayahData.ayahNumberInSurah,
+        level: connectingSource.wordIndex !== undefined ? 'word' : 'ayah',
+        startWord: connectingSource.wordIndex,
+        endWord: connectingSource.wordIndex,
+        text: connectingSource.wordText || sourceNode.ayahData.textUthmani,
+        surahName: sourceNode.ayahData.surahName,
+        ayahNumberInSurah: sourceNode.ayahData.ayahNumberInSurah
+      };
     }
 
-    const newEdge: CanvasEdge = {
-      id: `edge-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    // Formulate target anchor
+    let tgtAnchor = targetAnchor;
+    if (!tgtAnchor && targetNode?.type === 'ayah' && targetNode.ayahData) {
+      tgtAnchor = {
+        surah: targetNode.ayahData.surahNumber,
+        ayah: targetNode.ayahData.ayahNumberInSurah,
+        level: targetWordIndex !== undefined ? 'word' : 'ayah',
+        startWord: targetWordIndex,
+        endWord: targetWordIndex,
+        text: targetWordText || targetNode.ayahData.textUthmani,
+        surahName: targetNode.ayahData.surahName,
+        ayahNumberInSurah: targetNode.ayahData.ayahNumberInSurah
+      };
+    }
+
+    const sourceTitle = sourceNode?.ayahData
+      ? `سورة ${sourceNode.ayahData.surahName} [${sourceNode.ayahData.ayahNumberInSurah}]`
+      : sourceNode?.conceptData?.title || sourceNode?.noteData?.title || 'عنصر تدبري';
+
+    const targetTitle = targetNode?.ayahData
+      ? `سورة ${targetNode.ayahData.surahName} [${targetNode.ayahData.ayahNumberInSurah}]`
+      : targetNode?.conceptData?.title || targetNode?.noteData?.title || 'عنصر تدبري';
+
+    setPendingConnection({
       sourceId: connectingSource.nodeId,
       targetId: targetNodeId,
+      sourceAnchor: srcAnchor,
+      targetAnchor: tgtAnchor,
       sourceWordIndex: connectingSource.wordIndex,
       targetWordIndex: targetWordIndex,
       sourceWordText: connectingSource.wordText,
       targetWordText: targetWordText,
+      sourceNodeTitle: sourceTitle,
+      targetNodeTitle: targetTitle,
       sourceHandle: connectingSource.handle,
-      targetHandle,
-      style: 'solid',
+      targetHandle: targetHandle,
+      isSameNode: isSameNode
+    });
+    setConnectingSource(null);
+  };
+
+  const handleConfirmRelation = (edgeConfig: Partial<CanvasEdge>) => {
+    if (!pendingConnection) return;
+    const isSameNode = pendingConnection.isSameNode;
+
+    const newEdge: CanvasEdge = {
+      id: `edge-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      sourceId: pendingConnection.sourceId,
+      targetId: pendingConnection.targetId,
+      sourceAnchor: edgeConfig.sourceAnchor || pendingConnection.sourceAnchor,
+      targetAnchor: edgeConfig.targetAnchor || pendingConnection.targetAnchor,
+      sourceWordIndex: pendingConnection.sourceWordIndex,
+      targetWordIndex: pendingConnection.targetWordIndex,
+      sourceWordText: pendingConnection.sourceWordText,
+      targetWordText: pendingConnection.targetWordText,
+      sourceHandle: pendingConnection.sourceHandle,
+      targetHandle: pendingConnection.targetHandle,
+      relationshipKind: edgeConfig.relationshipKind || 'custom',
+      customRelationship: edgeConfig.customRelationship,
+      label: edgeConfig.label || 'رابط تدبري',
+      style: edgeConfig.style || 'solid',
       curveType: isSameNode ? 'arc' : 'bezier',
-      arrowType: 'end',
-      color: '#e11d48',
-      label: edgeLabel
+      arrowType: edgeConfig.arrowType || 'end',
+      color: edgeConfig.color || '#e11d48'
     };
 
     const newEdges = [...currentMap.edges, newEdge];
@@ -645,7 +698,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       updatedAt: Date.now()
     });
     pushToHistory(currentMap.nodes, newEdges);
-    setConnectingSource(null);
+    setPendingConnection(null);
   };
 
   // Node Actions
@@ -1186,10 +1239,10 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       {/* TRADINGVIEW UNBOUNDED INFINITE WORLD VIEWPORT LAYER      */}
       {/* ========================================================= */}
 
-      {/* SVG Layer for Edges and Active Drawing Wire */}
+      {/* SVG Layer for Edges and Active Drawing Wire (Layered at z-30 above cards so arrows and lines are completely visible) */}
       <svg
         id="canvas-svg-layer"
-        className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible"
+        className="absolute inset-0 w-full h-full pointer-events-none z-30 overflow-visible"
       >
         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
           {currentMap.edges.map((edge) => {
@@ -1230,9 +1283,21 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
               sX = anchor.x;
               sY = anchor.y;
               isWord = anchor.isWordAnchor;
+            } else if (connectingSource.handle) {
+              const anchor = getPreciseNodeAnchor(srcNode, connectingSource.handle);
+              sX = anchor.x;
+              sY = anchor.y;
             }
             return (
               <g>
+                <line
+                  x1={sX}
+                  y1={sY}
+                  x2={mouseCanvasPos.x}
+                  y2={mouseCanvasPos.y}
+                  stroke="rgba(255, 255, 255, 0.95)"
+                  strokeWidth={5}
+                />
                 <line
                   x1={sX}
                   y1={sY}
@@ -1244,14 +1309,14 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
                 />
                 {isWord ? (
                   <>
-                    <circle cx={sX} cy={sY} r={9} fill="#e11d48" fillOpacity={0.25} />
-                    <circle cx={sX} cy={sY} r={4.5} fill="#e11d48" stroke="#ffffff" strokeWidth={1.5} />
-                    <circle cx={mouseCanvasPos.x} cy={mouseCanvasPos.y} r={6} fill="#e11d48" />
+                    <circle cx={sX} cy={sY} r={10} fill="#e11d48" fillOpacity={0.25} className="animate-ping" />
+                    <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#e11d48" strokeWidth={2} />
+                    <circle cx={mouseCanvasPos.x} cy={mouseCanvasPos.y} r={7} fill="#e11d48" stroke="#ffffff" strokeWidth={1.5} />
                   </>
                 ) : (
                   <>
-                    <circle cx={sX} cy={sY} r={4} fill="#10b981" />
-                    <circle cx={mouseCanvasPos.x} cy={mouseCanvasPos.y} r={6} fill="#10b981" />
+                    <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#10b981" strokeWidth={2} />
+                    <circle cx={mouseCanvasPos.x} cy={mouseCanvasPos.y} r={7} fill="#10b981" stroke="#ffffff" strokeWidth={1.5} />
                   </>
                 )}
               </g>
@@ -1274,6 +1339,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
           .map((node) => (
             <div
               key={node.id}
+              id={`node-card-${node.id}`}
               onMouseDown={(e) => handleNodeMouseDown(node, e)}
               onTouchStart={(e) => handleNodeTouchStart(node, e)}
               className={`absolute pointer-events-auto transition-shadow z-5 ${
@@ -1304,6 +1370,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
           .map((node) => (
             <div
               key={node.id}
+              id={`node-card-${node.id}`}
               onMouseDown={(e) => handleNodeMouseDown(node, e)}
               onTouchStart={(e) => handleNodeTouchStart(node, e)}
               className={`absolute pointer-events-auto transition-shadow z-20 ${
@@ -1393,7 +1460,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       </div>
 
       {/* Bottom Right Mini-Map (Hidden by default on mobile) */}
-      <div className="absolute bottom-16 sm:bottom-5 right-3 sm:right-5 z-30">
+      <div className="absolute bottom-16 sm:bottom-5 right-3 sm:right-5 z-40">
         <CanvasMiniMap
           nodes={currentMap.nodes}
           pan={pan}
@@ -1796,6 +1863,15 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {/* Semantic Relation Configuration Modal */}
+      {pendingConnection && (
+        <RelationConfigModal
+          pendingConnection={pendingConnection}
+          onConfirm={handleConfirmRelation}
+          onCancel={() => setPendingConnection(null)}
+        />
       )}
     </div>
   );

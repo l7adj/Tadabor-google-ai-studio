@@ -24,6 +24,14 @@ export interface QuranCorpus {
   surahs: SurahData[];
 }
 
+export interface SearchMatchSpan {
+  wordIndex: number;
+  matchType: 'exact' | 'prefix' | 'suffix' | 'substring' | 'whole' | 'root' | 'semantic' | 'phrase';
+  matchedText: string;
+  query: string;
+  normalizedMatch?: string;
+}
+
 export interface SearchResultItem {
   surahNumber: number;
   surahName: string;
@@ -36,6 +44,8 @@ export interface SearchResultItem {
   textSimple: string;
   matchedRoot?: string;
   matchedWords?: string[];
+  matchedWordIndices?: number[];
+  matches?: SearchMatchSpan[];
   semanticTopic?: string;
 }
 
@@ -82,6 +92,55 @@ export interface SearchResponse {
 // Mind Map & Canvas types
 export type NodeType = 'ayah' | 'note' | 'image' | 'concept' | 'group';
 
+export type QuranAnchorLevel =
+  | 'surah'        // سورة كاملة
+  | 'ayah'         // آية كاملة
+  | 'word_range'   // مقطع كلمات متتابعة
+  | 'word'         // كلمة مفردة
+  | 'char_range'   // عدة أحرف
+  | 'char';        // حرف مفرد
+
+export interface QuranAnchor {
+  surah: number;
+  ayah: number;
+  level: QuranAnchorLevel;
+  startWord?: number;
+  endWord?: number;
+  startChar?: number;
+  endChar?: number;
+  text: string;
+  surahName?: string;
+  ayahNumberInSurah?: number;
+}
+
+export type RelationshipKind =
+  | 'cause'          // سبب (علة وموجب)
+  | 'effect'         // نتيجة (ثمرة وجزاء)
+  | 'tafsir'         // تفسير وبيان
+  | 'emphasis'       // تأكيد وتقوية
+  | 'contrast'       // مقابلة وتضاد
+  | 'similarity'     // تشابه وتناظر
+  | 'pairing'        // اقتران لفظي متلازم (كغفور رحيم)
+  | 'repetition'     // تكرار إعجازي
+  | 'theme'          // موضوع جامع
+  | 'shared_word'    // لفظ مشترك
+  | 'shared_root'    // جذر مشترك
+  | 'tadabbur'       // وقفة تدبرية
+  | 'deduction'      // استنباط ودلالة
+  | 'question'       // سؤال واستفهام
+  | 'answer'         // جواب وبيان
+  | 'custom';        // علاقة مخصصة
+
+export interface RelationshipDefinition {
+  kind: RelationshipKind;
+  label: string;
+  shortLabel: string;
+  description: string;
+  color: string;
+  defaultArrow: 'end' | 'both' | 'none';
+  defaultStyle: 'solid' | 'dashed' | 'dotted';
+}
+
 export interface WordAnnotation {
   id: string;
   wordIndex: number; // 0-based word index in the ayah
@@ -93,6 +152,7 @@ export interface WordAnnotation {
   phraseText?: string;   // Combined text of designated words
   charIndex?: number;    // If a specific letter is designated within word
   charText?: string;     // Designated letter/character
+  anchor?: QuranAnchor;  // Rich Quran Anchor link
 }
 
 export interface AyahNodeData {
@@ -107,6 +167,7 @@ export interface AyahNodeData {
   textSimple: string;
   annotations: WordAnnotation[];
   tafsir?: string;
+  focusedAnchor?: QuranAnchor;
 }
 
 export interface NoteNodeData {
@@ -153,6 +214,7 @@ export interface CanvasNode {
   imageData?: ImageNodeData;
   conceptData?: ConceptNodeData;
   groupData?: GroupNodeData;
+  anchor?: QuranAnchor;
 }
 
 export type HandlePosition = 'top' | 'right' | 'bottom' | 'left';
@@ -161,12 +223,19 @@ export interface CanvasEdge {
   id: string;
   sourceId: string;
   targetId: string;
+  // Rich Quran Anchors
+  sourceAnchor?: QuranAnchor;
+  targetAnchor?: QuranAnchor;
+  // Word indices backwards compatibility
   sourceWordIndex?: number;
   targetWordIndex?: number;
   sourceWordText?: string;
   targetWordText?: string;
   sourceHandle?: HandlePosition;
   targetHandle?: HandlePosition;
+  // Smart Relationship Engine
+  relationshipKind?: RelationshipKind;
+  customRelationship?: string;
   label?: string; // e.g. "علاقة سببية", "مقابلة وتضاد", "تناسب لفظي"
   style: 'solid' | 'dashed' | 'dotted';
   curveType?: 'bezier' | 'orthogonal' | 'straight' | 'arc';

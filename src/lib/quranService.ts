@@ -1,12 +1,19 @@
-import { QuranCorpus, SearchMode, SearchResultItem, SurahData, AyahData, SearchResponse } from '../types';
 import {
-  normalizeArabic,
+  QuranCorpus,
+  SearchMode,
+  SearchResultItem,
+  SurahData,
+  AyahData,
+  SearchResponse,
+  SearchMatchSpan
+} from '../types';
+import {
   removeTashkeel,
   cleanWordToken,
   wordMatchesRoot,
   extractCandidateRoots,
   normalizeQuranic,
-  wordMatchesQuery,
+  normalizeQuranicPhonetic,
   isQuranicSign
 } from './arabicUtils';
 import { getRootEntry } from './quranRoots';
@@ -16,16 +23,71 @@ let cachedCorpus: QuranCorpus | null = null;
 let isFetchingCorpus = false;
 let fetchPromise: Promise<QuranCorpus> | null = null;
 
+export interface IndexedWord {
+  index: number;
+  raw: string;
+  clean: string;
+  normStd: string;
+  normSkel: string;
+  normSimple: string;
+  normPhonetic: string;
+  isSign: boolean;
+}
+
 export interface PreIndexedAyah {
   surah: SurahData;
   ayah: AyahData;
   uWords: string[];
+  words: IndexedWord[];
   normUthmaniStd: string;
   normUthmaniSkel: string;
   normSimpleStd: string;
 }
 
 let indexedAyahs: PreIndexedAyah[] | null = null;
+
+const COMMON_ARABIC_PREFIXES = /^(ال|وال|فال|بال|ولل|فلل|كال|و|ف|ب|ل|ك)/;
+
+/**
+ * Builds deterministic, pre-indexed word coordinates for all 6,236 ayahs
+ */
+function buildIndexedAyahs(corpus: QuranCorpus): PreIndexedAyah[] {
+  const list: PreIndexedAyah[] = [];
+  for (const surah of corpus.surahs) {
+    for (const ayah of surah.ayahs) {
+      const uWords = ayah.textUthmani.trim().split(/\s+/);
+      const sWords = ayah.textSimple.trim().split(/\s+/);
+      const words: IndexedWord[] = [];
+
+      for (let i = 0; i < uWords.length; i++) {
+        const raw = uWords[i];
+        const sWord = sWords[i] || removeTashkeel(raw);
+        const isSign = isQuranicSign(raw);
+        words.push({
+          index: i,
+          raw,
+          clean: cleanWordToken(raw || sWord),
+          normStd: normalizeQuranic(raw, true),
+          normSkel: normalizeQuranic(raw, false),
+          normSimple: normalizeQuranic(sWord, true),
+          normPhonetic: normalizeQuranicPhonetic(raw),
+          isSign
+        });
+      }
+
+      list.push({
+        surah,
+        ayah,
+        uWords,
+        words,
+        normUthmaniStd: normalizeQuranic(ayah.textUthmani, true),
+        normUthmaniSkel: normalizeQuranic(ayah.textUthmani, false),
+        normSimpleStd: normalizeQuranic(ayah.textSimple, true)
+      });
+    }
+  }
+  return list;
+}
 
 /**
  * Load the complete Quran corpus (114 surahs) and build search index
@@ -39,6 +101,23 @@ export async function loadQuranCorpus(): Promise<QuranCorpus> {
     return fetchPromise;
   }
 
+  if (typeof window === 'undefined') {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const filePath = path.join(process.cwd(), 'public', 'quran-data.json');
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const data: QuranCorpus = JSON.parse(raw);
+      cachedCorpus = data;
+      if (!indexedAyahs) {
+        indexedAyahs = buildIndexedAyahs(data);
+      }
+      return data;
+    } catch (e) {
+      console.error('Failed to load local file in node environment:', e);
+    }
+  }
+
   isFetchingCorpus = true;
   fetchPromise = fetch('/quran-data.json')
     .then(async (res) => {
@@ -48,22 +127,8 @@ export async function loadQuranCorpus(): Promise<QuranCorpus> {
       const data: QuranCorpus = await res.json();
       cachedCorpus = data;
 
-      // Build ultra-fast search index for all 6,236 ayahs
       if (!indexedAyahs) {
-        const list: PreIndexedAyah[] = [];
-        for (const surah of data.surahs) {
-          for (const ayah of surah.ayahs) {
-            list.push({
-              surah,
-              ayah,
-              uWords: ayah.textUthmani.split(/\s+/),
-              normUthmaniStd: normalizeQuranic(ayah.textUthmani, true),
-              normUthmaniSkel: normalizeQuranic(ayah.textUthmani, false),
-              normSimpleStd: normalizeQuranic(ayah.textSimple, true)
-            });
-          }
-        }
-        indexedAyahs = list;
+        indexedAyahs = buildIndexedAyahs(data);
       }
 
       isFetchingCorpus = false;
@@ -106,7 +171,8 @@ export interface SearchOptions {
 }
 
 /**
- * Ultra-fast, comprehensive Quranic Search Engine
+ * Ultra-fast, deterministic Quranic Search Engine
+ * Produces exact match spans and word coordinates (wordIndex) for seamless Uthmani highlighting
  */
 export async function searchQuran(options: SearchOptions): Promise<SearchResponse> {
   const {
@@ -134,31 +200,18 @@ export async function searchQuran(options: SearchOptions): Promise<SearchRespons
   const corpus = await loadQuranCorpus();
 
   if (!indexedAyahs || indexedAyahs.length === 0) {
-    const list: PreIndexedAyah[] = [];
-    for (const surah of corpus.surahs) {
-      for (const ayah of surah.ayahs) {
-        list.push({
-          surah,
-          ayah,
-          uWords: ayah.textUthmani.split(/\s+/),
-          normUthmaniStd: normalizeQuranic(ayah.textUthmani, true),
-          normUthmaniSkel: normalizeQuranic(ayah.textUthmani, false),
-          normSimpleStd: normalizeQuranic(ayah.textSimple, true)
-        });
-      }
-    }
-    indexedAyahs = list;
+    indexedAyahs = buildIndexedAyahs(corpus);
   }
 
   const results: SearchResultItem[] = [];
   const matchingSurahIds = new Set<number>();
+  const itemsToSearch = indexedAyahs || [];
 
-  const cleanQueryToken = cleanWordToken(trimmedQuery);
-
-  // ----------------------------------------------------
-  // 1. ROOT SEARCH MODE (البحث بالجذر)
-  // ----------------------------------------------------
+  // ====================================================
+  // 1. ROOT SEARCH MODE (البحث بالجذر القرآني)
+  // ====================================================
   if (mode === 'root') {
+    const cleanQueryToken = cleanWordToken(trimmedQuery);
     let targetRoot = cleanQueryToken;
     let rootInfo = getRootEntry(targetRoot);
 
@@ -176,40 +229,48 @@ export async function searchQuran(options: SearchOptions): Promise<SearchRespons
 
     const rootToSearch = targetRoot;
 
-    for (const surah of corpus.surahs) {
+    for (const item of itemsToSearch) {
+      const { surah, ayah, words } = item;
       if (selectedSurahNumber && surah.number !== selectedSurahNumber) continue;
       if (revelationType !== 'all' && surah.revelationType !== revelationType) continue;
+      if (juzNumber && ayah.juz !== juzNumber) continue;
 
-      for (const ayah of surah.ayahs) {
-        if (juzNumber && ayah.juz !== juzNumber) continue;
+      const matchedWordIndices: number[] = [];
+      const matchedWords: string[] = [];
+      const matches: SearchMatchSpan[] = [];
 
-        const uWords = ayah.textUthmani.split(/\s+/);
-        const matchingWordsInAyah: string[] = [];
-
-        for (const w of uWords) {
-          if (isQuranicSign(w)) continue;
-          const cleanW = cleanWordToken(w);
-          if (wordMatchesRoot(cleanW, rootToSearch)) {
-            matchingWordsInAyah.push(w);
-          }
-        }
-
-        if (matchingWordsInAyah.length > 0) {
-          matchingSurahIds.add(surah.number);
-          results.push({
-            surahNumber: surah.number,
-            surahName: surah.name,
-            revelationType: surah.revelationType,
-            ayahNumberInSurah: ayah.numberInSurah,
-            overallAyahNumber: ayah.number,
-            juz: ayah.juz,
-            page: ayah.page,
-            textUthmani: ayah.textUthmani,
-            textSimple: ayah.textSimple,
-            matchedRoot: rootToSearch,
-            matchedWords: Array.from(new Set(matchingWordsInAyah))
+      for (const w of words) {
+        if (w.isSign) continue;
+        if (wordMatchesRoot(w.clean, rootToSearch)) {
+          matchedWordIndices.push(w.index);
+          matchedWords.push(w.raw);
+          matches.push({
+            wordIndex: w.index,
+            matchType: 'root',
+            matchedText: w.raw,
+            query: rootToSearch,
+            normalizedMatch: w.clean
           });
         }
+      }
+
+      if (matchedWordIndices.length > 0) {
+        matchingSurahIds.add(surah.number);
+        results.push({
+          surahNumber: surah.number,
+          surahName: surah.name,
+          revelationType: surah.revelationType,
+          ayahNumberInSurah: ayah.numberInSurah,
+          overallAyahNumber: ayah.number,
+          juz: ayah.juz,
+          page: ayah.page,
+          textUthmani: ayah.textUthmani,
+          textSimple: ayah.textSimple,
+          matchedRoot: rootToSearch,
+          matchedWords: Array.from(new Set(matchedWords)),
+          matchedWordIndices,
+          matches
+        });
       }
     }
 
@@ -219,22 +280,25 @@ export async function searchQuran(options: SearchOptions): Promise<SearchRespons
       totalMatches: results.length,
       surahsCount: matchingSurahIds.size,
       results: results.slice(0, limit),
-      matchedRootInfo: rootInfo ? {
-        root: rootInfo.root,
-        description: rootInfo.description,
-        primaryDerivatives: rootInfo.primaryDerivatives
-      } : undefined
+      matchedRootInfo: rootInfo
+        ? {
+            root: rootInfo.root,
+            description: rootInfo.description,
+            primaryDerivatives: rootInfo.primaryDerivatives
+          }
+        : undefined
     };
   }
 
-  // ----------------------------------------------------
-  // 2. SEMANTIC / THEMATIC SEARCH MODE (البحث بالمعنى والموضوع)
-  // ----------------------------------------------------
+  // ====================================================
+  // 2. SEMANTIC / THEMATIC SEARCH MODE (البحث الموضوعي/الدلالي الموجه)
+  // ====================================================
   if (mode === 'semantic') {
-    const matchedTopics = QURAN_SEMANTIC_TOPICS.filter((t) =>
-      t.title.includes(trimmedQuery) ||
-      t.keywords.some((k) => k.includes(trimmedQuery) || trimmedQuery.includes(k)) ||
-      t.description.includes(trimmedQuery)
+    const matchedTopics = QURAN_SEMANTIC_TOPICS.filter(
+      (t) =>
+        t.title.includes(trimmedQuery) ||
+        t.keywords.some((k) => k.includes(trimmedQuery) || trimmedQuery.includes(k)) ||
+        t.description.includes(trimmedQuery)
     );
 
     const primaryTopic = matchedTopics[0];
@@ -242,45 +306,66 @@ export async function searchQuran(options: SearchOptions): Promise<SearchRespons
       ? Array.from(new Set([trimmedQuery, ...primaryTopic.keywords]))
       : [trimmedQuery];
 
-    for (const surah of corpus.surahs) {
+    const targetKeywordsNormalized = targetKeywords.map((kw) => ({
+      raw: kw,
+      normStd: normalizeQuranic(kw, true),
+      clean: cleanWordToken(kw)
+    }));
+
+    for (const item of itemsToSearch) {
+      const { surah, ayah, words } = item;
       if (selectedSurahNumber && surah.number !== selectedSurahNumber) continue;
       if (revelationType !== 'all' && surah.revelationType !== revelationType) continue;
+      if (juzNumber && ayah.juz !== juzNumber) continue;
 
-      for (const ayah of surah.ayahs) {
-        if (juzNumber && ayah.juz !== juzNumber) continue;
+      const matchedWordIndices: number[] = [];
+      const matchedWords: string[] = [];
+      const matches: SearchMatchSpan[] = [];
 
-        const uWords = ayah.textUthmani.split(/\s+/);
-        const matchedKw: string[] = [];
-
-        for (const kw of targetKeywords) {
-          for (const w of uWords) {
-            if (isQuranicSign(w)) continue;
-            if (wordMatchesQuery(w, kw, 'contains')) {
-              matchedKw.push(w);
+      for (const kwObj of targetKeywordsNormalized) {
+        for (const w of words) {
+          if (w.isSign) continue;
+          if (
+            w.normStd.includes(kwObj.normStd) ||
+            w.normSimple.includes(kwObj.normStd) ||
+            w.clean.includes(kwObj.clean)
+          ) {
+            if (!matchedWordIndices.includes(w.index)) {
+              matchedWordIndices.push(w.index);
+              matchedWords.push(w.raw);
+              matches.push({
+                wordIndex: w.index,
+                matchType: 'semantic',
+                matchedText: w.raw,
+                query: kwObj.raw,
+                normalizedMatch: w.normStd
+              });
             }
           }
         }
+      }
 
-        const isCurated = primaryTopic?.sampleAyahs.some(
-          (sa) => sa.surahNumber === surah.number && sa.ayahNumber === ayah.numberInSurah
-        );
+      const isCurated = primaryTopic?.sampleAyahs.some(
+        (sa) => sa.surahNumber === surah.number && sa.ayahNumber === ayah.numberInSurah
+      );
 
-        if (matchedKw.length > 0 || isCurated) {
-          matchingSurahIds.add(surah.number);
-          results.push({
-            surahNumber: surah.number,
-            surahName: surah.name,
-            revelationType: surah.revelationType,
-            ayahNumberInSurah: ayah.numberInSurah,
-            overallAyahNumber: ayah.number,
-            juz: ayah.juz,
-            page: ayah.page,
-            textUthmani: ayah.textUthmani,
-            textSimple: ayah.textSimple,
-            matchedWords: Array.from(new Set(matchedKw)),
-            semanticTopic: primaryTopic ? primaryTopic.title : undefined
-          });
-        }
+      if (matchedWordIndices.length > 0 || isCurated) {
+        matchingSurahIds.add(surah.number);
+        results.push({
+          surahNumber: surah.number,
+          surahName: surah.name,
+          revelationType: surah.revelationType,
+          ayahNumberInSurah: ayah.numberInSurah,
+          overallAyahNumber: ayah.number,
+          juz: ayah.juz,
+          page: ayah.page,
+          textUthmani: ayah.textUthmani,
+          textSimple: ayah.textSimple,
+          matchedWords: Array.from(new Set(matchedWords)),
+          matchedWordIndices,
+          matches,
+          semanticTopic: primaryTopic ? primaryTopic.title : undefined
+        });
       }
     }
 
@@ -304,106 +389,191 @@ export async function searchQuran(options: SearchOptions): Promise<SearchRespons
       totalMatches: results.length,
       surahsCount: matchingSurahIds.size,
       results: results.slice(0, limit),
-      matchedSemanticTopic: primaryTopic ? {
-        title: primaryTopic.title,
-        description: primaryTopic.description
-      } : undefined
+      matchedSemanticTopic: primaryTopic
+        ? {
+            title: primaryTopic.title,
+            description: primaryTopic.description
+          }
+        : undefined
     };
   }
 
-  // ----------------------------------------------------
-  // 3. LITERAL / PHRASE SEARCH MODE (البحث الحرفي واللفظي الدقيق)
-  // ----------------------------------------------------
+  // ====================================================
+  // 3. LITERAL & PHRASE SEARCH MODE (البحث الحرفي واللفظي الدقيق)
+  // ====================================================
   const qTokens = trimmedQuery.split(/\s+/).filter(Boolean);
-  const qStd = normalizeQuranic(trimmedQuery, true);
-  const qSkel = normalizeQuranic(trimmedQuery, false);
-
-  const itemsToSearch = indexedAyahs || [];
 
   for (const item of itemsToSearch) {
-    const { surah, ayah, uWords } = item;
+    const { surah, ayah, words } = item;
 
     if (selectedSurahNumber && surah.number !== selectedSurahNumber) continue;
     if (revelationType !== 'all' && surah.revelationType !== revelationType) continue;
     if (juzNumber && ayah.juz !== juzNumber) continue;
 
+    const matchedWordIndices: number[] = [];
     const matchedWords: string[] = [];
+    const matches: SearchMatchSpan[] = [];
 
+    // Case 3.1: Exact Tashkeel Matching
     if (exactTashkeel) {
       if (ayah.textUthmani.includes(trimmedQuery)) {
-        for (const w of uWords) {
-          if (w.includes(trimmedQuery)) {
-            matchedWords.push(w);
+        for (const w of words) {
+          if (w.raw.includes(trimmedQuery)) {
+            matchedWordIndices.push(w.index);
+            matchedWords.push(w.raw);
+            matches.push({
+              wordIndex: w.index,
+              matchType: 'exact',
+              matchedText: w.raw,
+              query: trimmedQuery
+            });
           }
         }
-        if (matchedWords.length === 0) matchedWords.push(trimmedQuery);
       }
-    } else if (matchType === 'contains') {
-      // High-precision containment: check both full verse representations
-      const isAyahMatch =
-        item.normUthmaniStd.includes(qStd) ||
-        item.normSimpleStd.includes(qStd) ||
-        (qSkel && item.normUthmaniSkel.includes(qSkel));
+    }
+    // Case 3.2: Single Word Literal Matching
+    else if (qTokens.length === 1) {
+      const qStd = normalizeQuranic(trimmedQuery, true);
+      const qSkel = normalizeQuranic(trimmedQuery, false);
+      const qPhon = qStd.length >= 3 ? normalizeQuranicPhonetic(trimmedQuery) : '';
+      const cleanQ = cleanWordToken(trimmedQuery);
 
-      if (isAyahMatch) {
-        for (const w of uWords) {
-          if (isQuranicSign(w)) continue;
-          for (const qt of qTokens) {
-            if (wordMatchesQuery(w, qt, 'contains')) {
-              matchedWords.push(w);
-              break;
+      for (const w of words) {
+        if (w.isSign) continue;
+        let matchTypeFound: SearchMatchSpan['matchType'] | null = null;
+
+        if (matchType === 'whole') {
+          // Whole word matching
+          if (
+            w.normStd === qStd ||
+            w.normSimple === qStd ||
+            (qSkel && w.normSkel === qSkel) ||
+            w.clean === cleanQ
+          ) {
+            matchTypeFound = 'whole';
+          } else {
+            // Check matching with attached prefixes stripped (ال، و، ف، ب، ل، ك)
+            const wStem = w.normStd.replace(COMMON_ARABIC_PREFIXES, '');
+            const qStem = qStd.replace(COMMON_ARABIC_PREFIXES, '');
+            if (
+              wStem &&
+              qStem &&
+              (wStem === qStem || wStem === qStd || w.normStd === qStem)
+            ) {
+              matchTypeFound = 'whole';
             }
+          }
+        } else {
+          // Substring / Contains matching
+          if (
+            w.normStd.startsWith(qStd) ||
+            w.normSimple.startsWith(qStd) ||
+            (qSkel && w.normSkel.startsWith(qSkel))
+          ) {
+            matchTypeFound = 'prefix';
+          } else if (
+            w.normStd.endsWith(qStd) ||
+            w.normSimple.endsWith(qStd) ||
+            (qSkel && w.normSkel.endsWith(qSkel))
+          ) {
+            matchTypeFound = 'suffix';
+          } else if (
+            w.normStd.includes(qStd) ||
+            w.normSimple.includes(qStd) ||
+            (qSkel && w.normSkel.includes(qSkel))
+          ) {
+            matchTypeFound = 'substring';
+          } else if (qPhon && w.normPhonetic.includes(qPhon)) {
+            matchTypeFound = 'substring';
           }
         }
-        // Fallback if matching words were not individually tagged
-        if (matchedWords.length === 0 && uWords.length > 0) {
-          for (const w of uWords) {
-            if (isQuranicSign(w)) continue;
-            const wNorm = normalizeQuranic(w, true);
-            if (qStd.split('').some((ch) => wNorm.includes(ch))) {
-              matchedWords.push(w);
-            }
-          }
+
+        if (matchTypeFound) {
+          matchedWordIndices.push(w.index);
+          matchedWords.push(w.raw);
+          matches.push({
+            wordIndex: w.index,
+            matchType: matchTypeFound,
+            matchedText: w.raw,
+            query: trimmedQuery,
+            normalizedMatch: w.normStd
+          });
         }
       }
-    } else {
-      // Whole word matching
-      if (qTokens.length === 1) {
-        for (const w of uWords) {
-          if (isQuranicSign(w)) continue;
-          if (wordMatchesQuery(w, qTokens[0], 'whole')) {
-            matchedWords.push(w);
-          }
-        }
-      } else {
-        // Multi-word exact sequence
-        let tIdx = 0;
-        const currentRun: string[] = [];
-        for (const w of uWords) {
-          if (isQuranicSign(w)) continue;
-          if (tIdx < qTokens.length && wordMatchesQuery(w, qTokens[tIdx], 'whole')) {
-            currentRun.push(w);
-            tIdx++;
-          } else if (tIdx > 0 && tIdx < qTokens.length) {
-            if (wordMatchesQuery(w, qTokens[0], 'whole')) {
-              currentRun.length = 0;
-              currentRun.push(w);
-              tIdx = 1;
+    }
+    // Case 3.3: Multi-Word Phrase Matching (Sequential alignment)
+    else {
+      const tokenSpecs = qTokens.map((qt) => ({
+        raw: qt,
+        std: normalizeQuranic(qt, true),
+        skel: normalizeQuranic(qt, false),
+        clean: cleanWordToken(qt)
+      }));
+
+      const nonSignWords = words.filter((w) => !w.isSign);
+      const phraseLength = tokenSpecs.length;
+
+      for (let i = 0; i <= nonSignWords.length - phraseLength; i++) {
+        let isSequenceMatch = true;
+
+        for (let j = 0; j < phraseLength; j++) {
+          const w = nonSignWords[i + j];
+          const spec = tokenSpecs[j];
+
+          let tokenMatches = false;
+          if (matchType === 'whole') {
+            if (
+              w.normStd === spec.std ||
+              w.normSimple === spec.std ||
+              (spec.skel && w.normSkel === spec.skel) ||
+              w.clean === spec.clean
+            ) {
+              tokenMatches = true;
             } else {
-              currentRun.length = 0;
-              tIdx = 0;
+              const wStem = w.normStd.replace(COMMON_ARABIC_PREFIXES, '');
+              const sStem = spec.std.replace(COMMON_ARABIC_PREFIXES, '');
+              if (wStem && sStem && (wStem === sStem || wStem === spec.std || w.normStd === sStem)) {
+                tokenMatches = true;
+              }
+            }
+          } else {
+            if (
+              w.normStd.includes(spec.std) ||
+              w.normSimple.includes(spec.std) ||
+              (spec.skel && w.normSkel.includes(spec.skel)) ||
+              w.clean.includes(spec.clean)
+            ) {
+              tokenMatches = true;
             }
           }
-          if (tIdx === qTokens.length) {
-            matchedWords.push(...currentRun);
-            currentRun.length = 0;
-            tIdx = 0;
+
+          if (!tokenMatches) {
+            isSequenceMatch = false;
+            break;
+          }
+        }
+
+        if (isSequenceMatch) {
+          for (let j = 0; j < phraseLength; j++) {
+            const w = nonSignWords[i + j];
+            if (!matchedWordIndices.includes(w.index)) {
+              matchedWordIndices.push(w.index);
+              matchedWords.push(w.raw);
+              matches.push({
+                wordIndex: w.index,
+                matchType: 'phrase',
+                matchedText: w.raw,
+                query: tokenSpecs[j].raw,
+                normalizedMatch: w.normStd
+              });
+            }
           }
         }
       }
     }
 
-    if (matchedWords.length > 0) {
+    // Include ayah if and only if valid word matches occurred
+    if (matchedWordIndices.length > 0) {
       matchingSurahIds.add(surah.number);
       results.push({
         surahNumber: surah.number,
@@ -415,7 +585,9 @@ export async function searchQuran(options: SearchOptions): Promise<SearchRespons
         page: ayah.page,
         textUthmani: ayah.textUthmani,
         textSimple: ayah.textSimple,
-        matchedWords: Array.from(new Set(matchedWords))
+        matchedWords: Array.from(new Set(matchedWords)),
+        matchedWordIndices,
+        matches
       });
     }
   }
@@ -432,7 +604,10 @@ export async function searchQuran(options: SearchOptions): Promise<SearchRespons
 /**
  * Get overall ayah number (1-6236) by surah number and ayah number in surah
  */
-export function getOverallAyahNumber(surahNumber: number, ayahNumberInSurah: number): number | undefined {
+export function getOverallAyahNumber(
+  surahNumber: number,
+  ayahNumberInSurah: number
+): number | undefined {
   if (!cachedCorpus) return undefined;
   const surah = cachedCorpus.surahs.find((s) => s.number === surahNumber);
   const ayah = surah?.ayahs.find((a) => a.numberInSurah === ayahNumberInSurah);

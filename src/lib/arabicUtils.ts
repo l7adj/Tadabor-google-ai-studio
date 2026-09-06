@@ -208,14 +208,14 @@ export function cleanWordToken(word: string): string {
 /**
  * Extracts words from an ayah while keeping both Uthmani and Simple forms aligned
  */
-export function extractAyahWords(textUthmani: string, textSimple: string): Array<{
+export function extractAyahWords(textUthmani: string, textSimple: string = ''): Array<{
   index: number;
   uthmani: string;
   simple: string;
   normalized: string;
 }> {
-  const uthmaniWords = textUthmani.trim().split(/\s+/);
-  const simpleWords = textSimple.trim().split(/\s+/);
+  const uthmaniWords = textUthmani ? textUthmani.trim().split(/\s+/) : [];
+  const simpleWords = textSimple ? textSimple.trim().split(/\s+/) : [];
 
   const count = Math.max(uthmaniWords.length, simpleWords.length);
   const result: Array<{ index: number; uthmani: string; simple: string; normalized: string }> = [];
@@ -393,6 +393,7 @@ export function tokenizeAyahForHighlight(
   options?: {
     mode?: string;
     matchedWords?: string[];
+    matchedWordIndices?: number[];
     root?: string;
     matchType?: 'whole' | 'contains' | 'exact' | string;
     exactTashkeel?: boolean;
@@ -401,6 +402,11 @@ export function tokenizeAyahForHighlight(
   if (!textUthmani) return [];
   const words = textUthmani.trim().split(/\s+/);
   const qTokens = (query || '').trim().split(/\s+/).filter(Boolean);
+
+  // If explicit word indices were provided by the search engine, they are the authoritative ground truth!
+  const hasExactIndices = Boolean(options?.matchedWordIndices && options.matchedWordIndices.length > 0);
+  const matchedIndicesSet = hasExactIndices ? new Set(options?.matchedWordIndices) : null;
+
   const rawMatchedSet = new Set(options?.matchedWords || []);
   const cleanMatchedSet = new Set((options?.matchedWords || []).map((w) => cleanWordToken(w)));
   const targetRoot = options?.root ? cleanWordToken(options.root) : '';
@@ -412,6 +418,17 @@ export function tokenizeAyahForHighlight(
       return { index: i, raw: w, isMatched: false, isSign: true };
     }
 
+    // 1. Primary Path: Authoritative word index directly from indexed search engine
+    if (matchedIndicesSet) {
+      return {
+        index: i,
+        raw: w,
+        isMatched: matchedIndicesSet.has(i),
+        isSign: false
+      };
+    }
+
+    // 2. Secondary Path: Word-level fallback matching
     let isMatched = false;
 
     // Check direct raw match or clean word match against explicit matched words list

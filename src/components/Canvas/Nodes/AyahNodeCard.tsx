@@ -13,7 +13,7 @@ import {
   ZoomIn,
   ZoomOut
 } from 'lucide-react';
-import { CanvasNode, WordAnnotation, HandlePosition } from '../../../types';
+import { CanvasNode, WordAnnotation, HandlePosition, QuranAnchor } from '../../../types';
 import { extractAyahWords, cleanSurahName, extractWordLetters } from '../../../lib/arabicUtils';
 import { WordAnnotationPopover } from './WordAnnotationPopover';
 
@@ -27,8 +27,20 @@ interface AyahNodeCardProps {
   onUpdateTafsir?: (nodeId: string, tafsir: string) => void;
   onUpdateTheme?: (nodeId: string, theme: string) => void;
   onUpdateDimensions?: (nodeId: string, width: number, height?: number, fontSize?: number) => void;
-  onStartConnecting: (nodeId: string, wordIndex?: number, handle?: HandlePosition, wordText?: string) => void;
-  onCompleteConnecting?: (targetNodeId: string, targetHandle?: HandlePosition, targetWordIndex?: number, targetWordText?: string) => void;
+  onStartConnecting: (
+    nodeId: string,
+    wordIndex?: number,
+    handle?: HandlePosition,
+    wordText?: string,
+    anchor?: QuranAnchor
+  ) => void;
+  onCompleteConnecting?: (
+    targetNodeId: string,
+    targetHandle?: HandlePosition,
+    targetWordIndex?: number,
+    targetWordText?: string,
+    targetAnchor?: QuranAnchor
+  ) => void;
   isConnectingMode?: boolean;
   readOnly?: boolean;
   zoom?: number;
@@ -266,13 +278,50 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
     }
   };
 
+  const getAyahAnchor = (wIndex?: number, wText?: string, charIndex?: number): QuranAnchor => {
+    if (charIndex !== undefined && wIndex !== undefined) {
+      return {
+        surah: surahNumber,
+        ayah: ayahNumberInSurah,
+        level: 'char',
+        startWord: wIndex,
+        endWord: wIndex,
+        startChar: charIndex,
+        endChar: charIndex,
+        text: wText || '',
+        surahName: cleanSurahName(surahName),
+        ayahNumberInSurah
+      };
+    }
+    if (wIndex !== undefined) {
+      return {
+        surah: surahNumber,
+        ayah: ayahNumberInSurah,
+        level: 'word',
+        startWord: wIndex,
+        endWord: wIndex,
+        text: wText || '',
+        surahName: cleanSurahName(surahName),
+        ayahNumberInSurah
+      };
+    }
+    return {
+      surah: surahNumber,
+      ayah: ayahNumberInSurah,
+      level: 'ayah',
+      text: textUthmani,
+      surahName: cleanSurahName(surahName),
+      ayahNumberInSurah
+    };
+  };
+
   return (
     <div
-      id={`node-card-${node.id}`}
+      data-card-id={node.id}
       onClick={(e) => {
         if (isConnectingMode && onCompleteConnecting) {
           e.stopPropagation();
-          onCompleteConnecting(node.id);
+          onCompleteConnecting(node.id, undefined, undefined, undefined, getAyahAnchor());
           return;
         }
         onSelect();
@@ -303,7 +352,7 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onStartConnecting(node.id, undefined, 'top');
+              onStartConnecting(node.id, undefined, 'top', undefined, getAyahAnchor());
             }}
             className={`absolute -top-3 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full bg-white border-2 border-emerald-600 shadow-md flex items-center justify-center transition-all z-30 cursor-crosshair active:scale-95 ${
               isSelected ? 'opacity-100 scale-110' : 'opacity-0 group-hover/node:opacity-100 hover:scale-125'
@@ -317,7 +366,7 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onStartConnecting(node.id, undefined, 'bottom');
+              onStartConnecting(node.id, undefined, 'bottom', undefined, getAyahAnchor());
             }}
             className={`absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 rounded-full bg-white border-2 border-emerald-600 shadow-md flex items-center justify-center transition-all z-30 cursor-crosshair active:scale-95 ${
               isSelected ? 'opacity-100 scale-110' : 'opacity-0 group-hover/node:opacity-100 hover:scale-125'
@@ -331,7 +380,7 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onStartConnecting(node.id, undefined, 'right');
+              onStartConnecting(node.id, undefined, 'right', undefined, getAyahAnchor());
             }}
             className={`absolute top-1/2 -right-3 -translate-y-1/2 w-6 h-6 rounded-full bg-white border-2 border-emerald-600 shadow-md flex items-center justify-center transition-all z-30 cursor-crosshair active:scale-95 ${
               isSelected ? 'opacity-100 scale-110' : 'opacity-0 group-hover/node:opacity-100 hover:scale-125'
@@ -345,7 +394,7 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onStartConnecting(node.id, undefined, 'left');
+              onStartConnecting(node.id, undefined, 'left', undefined, getAyahAnchor());
             }}
             className={`absolute top-1/2 -left-3 -translate-y-1/2 w-6 h-6 rounded-full bg-white border-2 border-emerald-600 shadow-md flex items-center justify-center transition-all z-30 cursor-crosshair active:scale-95 ${
               isSelected ? 'opacity-100 scale-110' : 'opacity-0 group-hover/node:opacity-100 hover:scale-125'
@@ -547,7 +596,7 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onStartConnecting(node.id);
+                onStartConnecting(node.id, undefined, undefined, undefined, getAyahAnchor());
               }}
               className="p-1.5 text-stone-400 hover:text-emerald-700 hover:bg-black/5 rounded-full transition-colors"
               title="سحب سهم رابط"
@@ -602,7 +651,13 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onStartConnecting(node.id, w.index, undefined, w.uthmani);
+                      onStartConnecting(
+                        node.id,
+                        w.index,
+                        undefined,
+                        w.uthmani,
+                        getAyahAnchor(w.index, w.uthmani)
+                      );
                     }}
                     className="absolute -top-3.5 left-1/2 -translate-x-1/2 opacity-0 group-hover/word:opacity-100 bg-emerald-700 hover:bg-emerald-800 text-white p-1 rounded-full shadow-lg transition-all z-30 scale-90 hover:scale-110 cursor-pointer flex items-center justify-center pointer-events-auto"
                     title={`ربط كلمة "${w.uthmani}" بسهم رابط`}
@@ -617,7 +672,13 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                     onClick={(e) => {
                       e.stopPropagation();
                       if (onCompleteConnecting) {
-                        onCompleteConnecting(node.id, undefined, w.index, w.uthmani);
+                        onCompleteConnecting(
+                          node.id,
+                          undefined,
+                          w.index,
+                          w.uthmani,
+                          getAyahAnchor(w.index, w.uthmani)
+                        );
                       }
                     }}
                     className="absolute -top-4 left-1/2 -translate-x-1/2 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg z-30 cursor-pointer animate-pulse whitespace-nowrap font-cairo border border-rose-300 pointer-events-auto"
@@ -631,7 +692,13 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                   onClick={(e) => {
                     if (isConnectingMode && onCompleteConnecting) {
                       e.stopPropagation();
-                      onCompleteConnecting(node.id, undefined, w.index, w.uthmani);
+                      onCompleteConnecting(
+                        node.id,
+                        undefined,
+                        w.index,
+                        w.uthmani,
+                        getAyahAnchor(w.index, w.uthmani)
+                      );
                       return;
                     }
                     handleWordClick(w.index, e);
@@ -742,7 +809,13 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                     onSaveAnnotation={handleSaveAnnotation}
                     onRemoveAnnotation={handleRemoveAnnotation}
                     onStartConnectionFromWord={(idx, designatedText) =>
-                      onStartConnecting(node.id, idx, undefined, designatedText)
+                      onStartConnecting(
+                        node.id,
+                        idx,
+                        undefined,
+                        designatedText,
+                        getAyahAnchor(idx, designatedText, annotation.charIndex)
+                      )
                     }
                     onClose={() => setActiveWordIndex(null)}
                   />
@@ -804,7 +877,7 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onStartConnecting(node.id);
+              onStartConnecting(node.id, undefined, undefined, undefined, getAyahAnchor());
             }}
             className="text-emerald-700 hover:text-emerald-900 font-semibold"
           >

@@ -5,7 +5,7 @@ import { QuranSearchPanel } from './components/Search/QuranSearchPanel';
 import { PresentationView } from './components/Presentation/PresentationView';
 import { MindMapTemplatesModal } from './components/Canvas/MindMapTemplatesModal';
 import { QuickAyahPickerModal } from './components/Search/QuickAyahPickerModal';
-import { TadabburMap, CanvasNode, CanvasEdge, SearchResultItem } from './types';
+import { TadabburMap, CanvasNode, CanvasEdge, SearchResultItem, QuranAnchor, WordAnnotation } from './types';
 import { MindMapTemplate } from './lib/mindMapTemplates';
 import {
   getStoredMaps,
@@ -92,7 +92,7 @@ export default function App() {
   };
 
   // Add Ayah to current canvas from search
-  const handleAddAyahToCanvas = (item: SearchResultItem) => {
+  const handleAddAyahToCanvas = (item: SearchResultItem, anchor?: QuranAnchor) => {
     // Determine position: place to right of last node or near center
     const existingNodes = currentMap.nodes;
     let newX = 120;
@@ -108,6 +108,20 @@ export default function App() {
       }
     }
 
+    const annotations: WordAnnotation[] = [];
+    if (anchor && anchor.startWord !== undefined) {
+      annotations.push({
+        id: `ann-${Date.now()}`,
+        wordIndex: anchor.startWord,
+        endWordIndex: anchor.endWord,
+        wordText: anchor.text,
+        type: 'highlight',
+        color: '#d97706',
+        note: 'موضع ارتكاز تدبري',
+        anchor: anchor
+      });
+    }
+
     const newNode: CanvasNode = {
       id: `ayah-${item.overallAyahNumber}-${Date.now()}`,
       type: 'ayah',
@@ -120,6 +134,7 @@ export default function App() {
             ? 'emerald'
             : 'teal'
           : 'amber',
+      anchor: anchor,
       ayahData: {
         surahNumber: item.surahNumber,
         surahName: cleanSurahName(item.surahName),
@@ -130,7 +145,8 @@ export default function App() {
         revelationType: item.revelationType,
         textUthmani: item.textUthmani,
         textSimple: item.textSimple,
-        annotations: []
+        annotations: annotations,
+        focusedAnchor: anchor
       }
     };
 
@@ -141,13 +157,21 @@ export default function App() {
     };
 
     handleUpdateMap(updatedMap);
-    showToast(`تمت إضافة سورة ${cleanSurahName(item.surahName)} [آية ${item.ayahNumberInSurah}] إلى الخريطة`);
+    if (anchor && anchor.level === 'word') {
+      showToast(`تمت إضافة آية مع ارتكاز على كلمة «${anchor.text}»`);
+    } else {
+      showToast(`تمت إضافة سورة ${cleanSurahName(item.surahName)} [آية ${item.ayahNumberInSurah}] إلى الخريطة`);
+    }
   };
 
   // Add multiple ayahs from Quick Ayah Picker
-  const handleSelectQuickAyahs = (items: SearchResultItem[]) => {
+  const handleSelectQuickAyahs = (items: SearchResultItem[], anchor?: QuranAnchor) => {
     if (!items || items.length === 0) return;
-    items.forEach((item) => handleAddAyahToCanvas(item));
+    if (items.length === 1 && anchor) {
+      handleAddAyahToCanvas(items[0], anchor);
+    } else {
+      items.forEach((item) => handleAddAyahToCanvas(item));
+    }
   };
 
   // Apply Mind Map Template

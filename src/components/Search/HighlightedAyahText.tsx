@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { tokenizeAyahForHighlight } from '../../lib/arabicUtils';
+import { SearchMatchSpan } from '../../types';
 
 export type HighlightColor = 'amber' | 'emerald' | 'rose';
 
@@ -7,6 +8,8 @@ interface HighlightedAyahTextProps {
   textUthmani: string;
   query: string;
   matchedWords?: string[];
+  matchedWordIndices?: number[];
+  matches?: SearchMatchSpan[];
   mode?: 'exact' | 'root' | 'semantic' | string;
   root?: string;
   matchType?: 'whole' | 'contains' | 'exact';
@@ -19,6 +22,8 @@ export const HighlightedAyahText: React.FC<HighlightedAyahTextProps> = ({
   textUthmani,
   query,
   matchedWords = [],
+  matchedWordIndices,
+  matches,
   mode,
   root,
   matchType = 'contains',
@@ -26,15 +31,26 @@ export const HighlightedAyahText: React.FC<HighlightedAyahTextProps> = ({
   highlightColor = 'amber',
   className = ''
 }) => {
+  const effectiveWordIndices = useMemo(() => {
+    if (matchedWordIndices && matchedWordIndices.length > 0) {
+      return matchedWordIndices;
+    }
+    if (matches && matches.length > 0) {
+      return matches.map((m) => m.wordIndex);
+    }
+    return undefined;
+  }, [matchedWordIndices, matches]);
+
   const tokens = useMemo(() => {
     return tokenizeAyahForHighlight(textUthmani, query, {
       mode,
       matchedWords,
+      matchedWordIndices: effectiveWordIndices,
       root,
       matchType,
       exactTashkeel
     });
-  }, [textUthmani, query, matchedWords, mode, root, matchType, exactTashkeel]);
+  }, [textUthmani, query, matchedWords, effectiveWordIndices, mode, root, matchType, exactTashkeel]);
 
   const highlightStyles: Record<HighlightColor, string> = {
     amber: 'bg-amber-100/95 text-amber-900 border border-amber-300/90 shadow-2xs font-bold ring-1 ring-amber-400/30',

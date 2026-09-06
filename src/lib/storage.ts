@@ -415,3 +415,66 @@ export function setActiveMapId(id: string): void {
     console.error('Failed to save active map id:', e);
   }
 }
+
+const STORAGE_KEY_CUSTOM_TEMPLATES = 'tadabbur_quran_custom_templates_v1';
+
+export function loadUserCustomTemplates(): Array<{
+  id: string;
+  title: string;
+  subtitle: string;
+  category: 'thematic' | 'comparative' | 'etymology' | 'journey' | 'contrast' | 'narrative';
+  categoryLabel: string;
+  description: string;
+  badge: string;
+  colorTheme: string;
+  iconName: string;
+  nodesCount: number;
+  edgesCount: number;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  isCustom?: boolean;
+}> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_TEMPLATES);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+export function saveUserCustomTemplate(template: {
+  id: string;
+  title: string;
+  subtitle: string;
+  category: 'thematic' | 'comparative' | 'etymology' | 'journey' | 'contrast' | 'narrative';
+  categoryLabel: string;
+  description: string;
+  badge: string;
+  colorTheme: string;
+  iconName: string;
+  nodesCount: number;
+  edgesCount: number;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  isCustom?: boolean;
+}): void {
+  try {
+    const current = loadUserCustomTemplates();
+    const filtered = current.filter((t) => t.id !== template.id);
+    filtered.unshift({ ...template, isCustom: true });
+    localStorage.setItem(STORAGE_KEY_CUSTOM_TEMPLATES, JSON.stringify(filtered));
+  } catch (e) {
+    console.error('Failed to save user custom template:', e);
+  }
+}
+
+export function deleteUserCustomTemplate(templateId: string): void {
+  try {
+    const current = loadUserCustomTemplates();
+    const filtered = current.filter((t) => t.id !== templateId);
+    localStorage.setItem(STORAGE_KEY_CUSTOM_TEMPLATES, JSON.stringify(filtered));
+  } catch (e) {
+    console.error('Failed to delete user custom template:', e);
+  }
+}
