@@ -21,6 +21,12 @@ import {
   createWordRangeAnchor,
   createCharAnchor
 } from '../../../lib/quranAnchors';
+import {
+  useQuranSelection,
+  createWordSelection,
+  createCharSelection,
+  createAyahSelection
+} from '../../../engine';
 import { WordAnnotationPopover } from './WordAnnotationPopover';
 
 interface AyahNodeCardProps {
@@ -135,6 +141,15 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
   const [isResizing, setIsResizing] = useState<'left' | 'right' | null>(null);
   const [liveWidth, setLiveWidth] = useState<number>(node.width || 420);
 
+  // Central Quran Selection Engine Integration
+  const {
+    activeSelection,
+    multiSelections,
+    selectWord,
+    selectLetter,
+    toggleMultiSelection
+  } = useQuranSelection();
+
   useEffect(() => {
     setLiveWidth(node.width || 420);
   }, [node.width]);
@@ -231,11 +246,39 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
     const clickedWord = words.find((w) => w.index === index);
     if (!clickedWord) return;
 
-    // If currently in connection mode, clicking this word completes the connection directly!
+    // Connect mode handling
     if (isConnectingMode && onCompleteConnecting) {
-      onCompleteConnecting(node.id, undefined, index, clickedWord.uthmani);
+      onCompleteConnecting(
+        node.id,
+        undefined,
+        index,
+        clickedWord.uthmani,
+        getAyahAnchor(index, clickedWord.uthmani)
+      );
       return;
     }
+
+    // Register with central QuranSelectionEngine
+    const wordSel = createWordSelection({
+      surah: surahNumber,
+      ayah: ayahNumberInSurah,
+      wordIndex: index,
+      wordText: clickedWord.uthmani,
+      surahName: cleanSurahName(surahName)
+    });
+
+    if (e.shiftKey) {
+      toggleMultiSelection(wordSel);
+      return;
+    }
+
+    selectWord({
+      surah: surahNumber,
+      ayah: ayahNumberInSurah,
+      wordIndex: index,
+      wordText: clickedWord.uthmani,
+      surahName: cleanSurahName(surahName)
+    });
 
     // Check if word already belongs to an existing annotation
     const existing = annotations.find(
@@ -650,6 +693,23 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
             const isFirstInMulti = annotation ? annotation.wordIndex === w.index : false;
             const isLastInMulti = annotation && annotation.endWordIndex !== undefined ? annotation.endWordIndex === w.index : false;
 
+            // Check Central Selection Engine state
+            const isEngineSelected =
+              activeSelection?.anchor.surahId === surahNumber &&
+              activeSelection?.anchor.ayahId === ayahNumberInSurah &&
+              (activeSelection?.anchor.wordIndex === w.index ||
+                (activeSelection?.anchor.startWord !== undefined &&
+                  activeSelection?.anchor.endWord !== undefined &&
+                  w.index >= activeSelection.anchor.startWord &&
+                  w.index <= activeSelection.anchor.endWord));
+
+            const isEngineMultiSelected = multiSelections.some(
+              (m) =>
+                m.anchor.surahId === surahNumber &&
+                m.anchor.ayahId === ayahNumberInSurah &&
+                m.anchor.wordIndex === w.index
+            );
+
             // Character level rendering if this annotation targets a specific character within this word
             const hasCharTarget = Boolean(annotation && annotation.charIndex !== undefined && annotation.wordIndex === w.index);
             const wordLetters = hasCharTarget ? extractWordLetters(w.uthmani) : null;
@@ -721,6 +781,10 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                     !readOnly ? 'hover:opacity-90' : ''
                   } ${
                     isConnectingMode ? 'hover:scale-105 ring-2 ring-rose-500/80 rounded-lg shadow-xs' : ''
+                  } ${
+                    isEngineMultiSelected ? 'ring-2 ring-indigo-500/90 bg-indigo-100/50 rounded-lg shadow-xs' : ''
+                  } ${
+                    isEngineSelected && !isEngineMultiSelected ? 'ring-2 ring-emerald-500/80 bg-emerald-50/40 rounded-lg' : ''
                   }`}
                   style={{
                     padding: isMultiWord ? '2px 4px' : '2px 6px',
@@ -791,6 +855,32 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
                                   `حرف «${ltr.displayWithMarks}» في (${w.uthmani})`,
                                   charAnchor
                                 );
+                                return;
+                              }
+
+                              e.stopPropagation();
+                              const charSel = createCharSelection({
+                                surah: surahNumber,
+                                ayah: ayahNumberInSurah,
+                                wordIndex: w.index,
+                                charIndex: ltr.charIndex,
+                                charText: ltr.displayWithMarks,
+                                wordText: w.uthmani,
+                                surahName: cleanSurahName(surahName)
+                              });
+
+                              if (e.shiftKey) {
+                                toggleMultiSelection(charSel);
+                              } else {
+                                selectLetter({
+                                  surah: surahNumber,
+                                  ayah: ayahNumberInSurah,
+                                  wordIndex: w.index,
+                                  charIndex: ltr.charIndex,
+                                  charText: ltr.displayWithMarks,
+                                  wordText: w.uthmani,
+                                  surahName: cleanSurahName(surahName)
+                                });
                               }
                             }}
                             className={`relative inline-block transition-all ${

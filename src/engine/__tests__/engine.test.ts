@@ -225,6 +225,90 @@ console.log('--- Starting Quran Engine Verification Tests ---');
   console.log('✓ Test 5 Passed: RelationshipEngine indexing, queries, and self-loop prevention');
 }
 
+// Test 6: Central Selection APIs & Unified Pipeline (Selection -> Anchor -> Relationship)
+{
+  const engine = new QuranSelectionEngine();
+
+  // 1. selectWord
+  const wordSel = engine.selectWord({
+    surah: 1,
+    ayah: 1,
+    wordIndex: 1,
+    wordText: 'اللَّهِ',
+    surahName: 'الفاتحة'
+  });
+  assert(engine.getSelection()?.id === wordSel.id, 'selectWord sets active selection');
+  assert(engine.toAnchor()?.wordIndex === 1, 'toAnchor resolves word anchor');
+
+  // 2. selectLetter
+  const charSel = engine.selectLetter({
+    surah: 1,
+    ayah: 1,
+    wordIndex: 0,
+    charIndex: 0,
+    charText: 'بِ',
+    wordText: 'بِسْمِ'
+  });
+  assert(engine.getSelection()?.id === charSel.id, 'selectLetter updates active selection');
+  assert(engine.toAnchor()?.charIndex === 0, 'toAnchor resolves char anchor');
+
+  // 3. selectWordRange
+  const rangeSel = engine.selectWordRange({
+    surah: 1,
+    ayah: 1,
+    startWord: 0,
+    endWord: 3,
+    phraseText: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ'
+  });
+  assert(rangeSel.anchor.level === 'word_range', 'selectWordRange creates valid range');
+
+  // 4. selectCharRange
+  const charRangeSel = engine.selectCharRange({
+    surah: 1,
+    ayah: 2,
+    wordIndex: 1,
+    startChar: 0,
+    endChar: 2,
+    charRangeText: 'حَمْد'
+  });
+  assert(charRangeSel.anchor.level === 'char_range', 'selectCharRange creates valid char range');
+
+  // 5. selectAyah
+  const ayahSel = engine.selectAyah({
+    surah: 112,
+    ayah: 1,
+    text: 'قُلْ هُوَ اللَّهُ أَحَدٌ'
+  });
+  assert(ayahSel.anchor.level === 'ayah', 'selectAyah creates ayah anchor');
+
+  // 6. selectMultiple
+  const multi = engine.selectMultiple([wordSel, ayahSel]);
+  assert(multi !== null, 'selectMultiple returns composite selection');
+  assert(engine.getMultiSelections().length === 2, '2 items in multi-selection set');
+
+  // 7. Pipeline: Selection -> Anchor -> Relationship
+  const pipelineResult = engine.createRelationshipPipeline({
+    source: wordSel,
+    target: ayahSel,
+    kind: 'theme',
+    label: 'علاقة موضوعية'
+  });
+  assert(pipelineResult.validation.isValid, 'Pipeline validation passed');
+  assert(pipelineResult.relationship !== null, 'Relationship created through pipeline');
+  assert(pipelineResult.relationship?.sourceAnchor.id === wordSel.anchor.id, 'Source anchor matched in pipeline');
+  assert(pipelineResult.relationship?.targetAnchor.id === ayahSel.anchor.id, 'Target anchor matched in pipeline');
+
+  // 8. Pipeline rejection on identical anchors
+  const invalidPipeline = engine.createRelationshipPipeline({
+    source: wordSel,
+    target: wordSel,
+    kind: 'similarity'
+  });
+  assert(!invalidPipeline.validation.isValid, 'Pipeline correctly rejects self-linking identical selection');
+
+  console.log('✓ Test 6 Passed: Central Selection APIs & Unified Pipeline (Selection -> Anchor -> Relationship)');
+}
+
 console.log('\n========================================');
-console.log('ALL 5 QURAN ENGINE TESTS PASSED WITH 100% SUCCESS');
+console.log('ALL 6 QURAN ENGINE TESTS PASSED WITH 100% SUCCESS');
 console.log('========================================\n');

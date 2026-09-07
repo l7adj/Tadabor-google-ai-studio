@@ -12,6 +12,7 @@ export * from './quran/QuranSelection';
 
 // Quran Selection Engine & State Machine
 export * from './quran/QuranSelectionEngine';
+export * from './quran/useQuranSelection';
 
 // Relationship Models & Engine
 export * from './relationship/QuranRelationship';

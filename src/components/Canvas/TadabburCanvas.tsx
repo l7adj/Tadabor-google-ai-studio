@@ -50,6 +50,11 @@ import { EdgeRenderer, getPreciseNodeAnchor } from './EdgeRenderer';
 import { CanvasMiniMap } from './CanvasMiniMap';
 import { calculateMindMapLayout } from '../../lib/mindMapLayout';
 import { RelationConfigModal, PendingConnectionData } from './RelationConfigModal';
+import {
+  useQuranSelection,
+  globalRelationshipEngine,
+  RelationshipEngine
+} from '../../engine';
 
 interface TadabburCanvasProps {
   currentMap: TadabburMap;
@@ -119,6 +124,28 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 
   // Selection State (supports multi-selection with Shift or touch)
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+
+  // Central Quran Selection Engine Integration
+  const {
+    activeSelection,
+    multiSelections,
+    clearMultiSelection,
+    clearSelection
+  } = useQuranSelection();
+
+  // Sync canvas edges to RelationshipEngine for indexing and validation
+  useEffect(() => {
+    globalRelationshipEngine.clear();
+    currentMap.edges.forEach((edge) => {
+      if (edge.sourceAnchor && edge.targetAnchor) {
+        try {
+          globalRelationshipEngine.addRelationship(RelationshipEngine.fromCanvasEdge(edge));
+        } catch (e) {
+          // ignore parsing error for non-quran edge
+        }
+      }
+    });
+  }, [currentMap.edges]);
 
   // Connection Creation State
   const [connectingSource, setConnectingSource] = useState<{
@@ -701,7 +728,53 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       updatedAt: Date.now()
     });
     pushToHistory(currentMap.nodes, newEdges);
+
+    // Sync to RelationshipEngine
+    if (newEdge.sourceAnchor && newEdge.targetAnchor) {
+      try {
+        globalRelationshipEngine.addRelationship(RelationshipEngine.fromCanvasEdge(newEdge));
+      } catch (e) {
+        // ignore
+      }
+    }
+
     setPendingConnection(null);
+  };
+
+  // Batch connect items in multi-selection set
+  const handleBatchConnectMultiSelections = () => {
+    if (multiSelections.length < 2) return;
+    const src = multiSelections[0];
+    const tgt = multiSelections[1];
+
+    const srcNode = currentMap.nodes.find(
+      (n) =>
+        n.type === 'ayah' &&
+        n.ayahData?.surahNumber === src.anchor.surahId &&
+        n.ayahData?.ayahNumberInSurah === src.anchor.ayahId
+    );
+    const tgtNode = currentMap.nodes.find(
+      (n) =>
+        n.type === 'ayah' &&
+        n.ayahData?.surahNumber === tgt.anchor.surahId &&
+        n.ayahData?.ayahNumberInSurah === tgt.anchor.ayahId
+    );
+
+    if (!srcNode || !tgtNode) return;
+
+    setPendingConnection({
+      sourceId: srcNode.id,
+      targetId: tgtNode.id,
+      sourceAnchor: src.anchor,
+      targetAnchor: tgt.anchor,
+      sourceWordIndex: src.anchor.wordIndex,
+      targetWordIndex: tgt.anchor.wordIndex,
+      sourceWordText: src.text,
+      targetWordText: tgt.text,
+      sourceNodeTitle: srcNode.title || `سورة ${src.anchor.surahName || src.anchor.surahId}`,
+      targetNodeTitle: tgtNode.title || `سورة ${tgt.anchor.surahName || tgt.anchor.surahId}`,
+      isSameNode: srcNode.id === tgtNode.id
+    });
   };
 
   // Node Actions
@@ -1865,6 +1938,50 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
               فهمت ذلك
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Multi-Selection Quranic Dock */}
+      {multiSelections.length > 0 && (
+        <div
+          id="quran-multi-selection-dock"
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 bg-stone-900/95 text-white backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-2xl border border-stone-700/80 flex items-center gap-3 font-cairo text-xs animate-in slide-in-from-bottom-5 duration-150"
+          dir="rtl"
+        >
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="font-bold text-emerald-300 whitespace-nowrap">
+              {multiSelections.length} مواضع قرآنية محددة:
+            </span>
+            <div className="flex items-center gap-1.5 max-w-[260px] sm:max-w-md overflow-x-auto py-0.5 no-scrollbar">
+              {multiSelections.map((sel) => (
+                <span
+                  key={sel.id}
+                  className="bg-stone-800/90 border border-stone-700 px-2 py-0.5 rounded-lg text-[11px] font-quran text-amber-200 whitespace-nowrap shadow-2xs"
+                  title={`${sel.anchor.surahName || ''} (${sel.anchor.surahId}:${sel.anchor.ayahId})`}
+                >
+                  {sel.text}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {multiSelections.length >= 2 && (
+            <button
+              onClick={handleBatchConnectMultiSelections}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs hover:scale-105 active:scale-95 whitespace-nowrap"
+            >
+              <Link className="w-3.5 h-3.5" />
+              <span>ربط الموضعين بعلاقة</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => clearMultiSelection()}
+            className="text-stone-400 hover:text-rose-400 px-2 py-1 rounded-lg hover:bg-white/5 transition-colors whitespace-nowrap"
+          >
+            إلغاء التحديد
+          </button>
         </div>
       )}
 

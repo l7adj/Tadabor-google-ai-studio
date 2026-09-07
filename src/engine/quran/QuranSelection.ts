@@ -279,6 +279,52 @@ export function createAyahSelection(params: {
 }
 
 /**
+ * Factory for an Ayah Range selection (thematic passage or narrative arc)
+ */
+export function createAyahRangeSelection(params: {
+  surah: number;
+  startAyah: number;
+  endAyah: number;
+  text: string;
+  surahName?: string;
+}): QuranSelection {
+  const startPos: QuranPosition = {
+    surah: params.surah,
+    ayah: params.startAyah
+  };
+  const endPos: QuranPosition = {
+    surah: params.surah,
+    ayah: params.endAyah
+  };
+
+  const anchor: QuranAnchorV2 = {
+    id: `anchor-s${params.surah}-a${params.startAyah}_to_a${params.endAyah}`,
+    surahId: params.surah,
+    ayahId: params.startAyah,
+    endAyah: params.endAyah,
+    level: 'ayah_range',
+    text: params.text.trim(),
+    normalizedText: normalizeArabic(params.text),
+    surahName: params.surahName,
+    ayahNumberInSurah: params.startAyah,
+    surah: params.surah,
+    ayah: params.startAyah
+  };
+  anchor.id = generateAnchorId(anchor);
+
+  return {
+    id: `sel-${anchor.id}`,
+    type: 'ayah_range',
+    anchor,
+    startPosition: startPos,
+    endPosition: endPos,
+    text: params.text.trim(),
+    normalizedText: normalizeArabic(params.text),
+    createdAt: Date.now()
+  };
+}
+
+/**
  * Factory for a composite non-contiguous multi-selection
  */
 export function createMultiSelection(selections: QuranSelection[]): QuranSelection {

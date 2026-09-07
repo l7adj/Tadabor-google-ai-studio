@@ -37,6 +37,11 @@ export class RelationshipEngine {
     return Array.from(this.relationships.values());
   }
 
+  public clear(): void {
+    this.relationships.clear();
+    this.anchorIndex.clear();
+  }
+
   /**
    * Find all relationships connected to a given Quran anchor
    */
