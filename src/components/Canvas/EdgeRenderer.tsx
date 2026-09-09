@@ -300,7 +300,7 @@ export function calculateEdgeGeometry(
   return { pathData, midX, midY, sX, sY, tX, tY, distance, isSameNode, sCoord, tCoord };
 }
 
-export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
+export const EdgeRenderer: React.FC<EdgeRendererProps> = React.memo(({
   edge,
   sourceNode,
   targetNode,
@@ -660,4 +660,4 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
       </foreignObject>
     </g>
   );
-};
+});

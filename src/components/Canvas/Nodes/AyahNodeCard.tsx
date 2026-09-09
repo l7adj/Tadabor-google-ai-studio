@@ -116,7 +116,7 @@ const THEME_STYLES: Record<string, {
   }
 };
 
-export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
+export const AyahNodeCard: React.FC<AyahNodeCardProps> = React.memo(({
   node,
   isSelected,
   onSelect,
@@ -1045,4 +1045,4 @@ export const AyahNodeCard: React.FC<AyahNodeCardProps> = ({
       )}
     </div>
   );
-};
+});

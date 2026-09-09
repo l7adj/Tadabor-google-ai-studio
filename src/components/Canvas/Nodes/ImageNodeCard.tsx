@@ -14,7 +14,7 @@ interface ImageNodeCardProps {
   readOnly?: boolean;
 }
 
-export const ImageNodeCard: React.FC<ImageNodeCardProps> = ({
+export const ImageNodeCard: React.FC<ImageNodeCardProps> = React.memo(({
   node,
   isSelected,
   onSelect,
@@ -189,4 +189,4 @@ export const ImageNodeCard: React.FC<ImageNodeCardProps> = ({
       </div>
     </div>
   );
-};
+});

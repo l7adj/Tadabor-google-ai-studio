@@ -15,7 +15,7 @@ interface ConceptNodeCardProps {
   readOnly?: boolean;
 }
 
-export const ConceptNodeCard: React.FC<ConceptNodeCardProps> = ({
+export const ConceptNodeCard: React.FC<ConceptNodeCardProps> = React.memo(({
   node,
   isSelected,
   onSelect,
@@ -236,4 +236,4 @@ export const ConceptNodeCard: React.FC<ConceptNodeCardProps> = ({
       </div>
     </div>
   );
-};
+});

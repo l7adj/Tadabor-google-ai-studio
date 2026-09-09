@@ -25,7 +25,7 @@ const THEME_STYLES: Record<string, { bg: string; border: string; headerBg: strin
   rose: { bg: 'bg-rose-50/95', border: 'border-rose-300', headerBg: 'bg-rose-100/80', text: 'text-rose-950' }
 };
 
-export const NoteNodeCard: React.FC<NoteNodeCardProps> = ({
+export const NoteNodeCard: React.FC<NoteNodeCardProps> = React.memo(({
   node,
   isSelected,
   onSelect,
@@ -348,4 +348,4 @@ export const NoteNodeCard: React.FC<NoteNodeCardProps> = ({
       </div>
     </div>
   );
-};
+});

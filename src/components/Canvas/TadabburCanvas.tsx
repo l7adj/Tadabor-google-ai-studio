@@ -150,18 +150,9 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     clearSelection
   } = useQuranSelection();
 
-  // Sync canvas edges to RelationshipEngine for indexing and validation
+  // Incremental sync of canvas edges to RelationshipEngine (Single Source of Truth)
   useEffect(() => {
-    globalRelationshipEngine.clear();
-    currentMap.edges.forEach((edge) => {
-      if (edge.sourceAnchor && edge.targetAnchor) {
-        try {
-          globalRelationshipEngine.addRelationship(RelationshipEngine.fromCanvasEdge(edge));
-        } catch (e) {
-          // ignore parsing error for non-quran edge
-        }
-      }
-    });
+    globalRelationshipEngine.syncCanvasEdges(currentMap.edges);
   }, [currentMap.edges]);
 
   // Connection Creation State

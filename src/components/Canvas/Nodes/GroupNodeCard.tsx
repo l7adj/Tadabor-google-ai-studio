@@ -51,7 +51,7 @@ const THEME_STYLES: Record<string, { bg: string; border: string; text: string; h
   }
 };
 
-export const GroupNodeCard: React.FC<GroupNodeCardProps> = ({
+export const GroupNodeCard: React.FC<GroupNodeCardProps> = React.memo(({
   node,
   isSelected,
   onSelect,
@@ -206,4 +206,4 @@ export const GroupNodeCard: React.FC<GroupNodeCardProps> = ({
       </div>
     </div>
   );
-};
+});
