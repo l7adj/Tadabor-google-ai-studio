@@ -29,7 +29,8 @@ import {
   Compass,
   MapPin,
   ChevronUp,
-  RotateCcw
+  RotateCcw,
+  Trash2
 } from 'lucide-react';
 import {
   TadabburMap,
@@ -1492,29 +1493,6 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
         </button>
       </div>
 
-      {/* TradingView-Style Infinite Coordinates & Metrics HUD (Desktop) */}
-      <div className="absolute bottom-4 left-4 z-30 hidden sm:flex items-center gap-2 bg-stone-900/90 backdrop-blur-md text-stone-200 px-3 py-1.5 rounded-xl border border-stone-700/60 shadow-xl text-xs font-mono select-none">
-        <Compass className="w-3.5 h-3.5 text-emerald-400" />
-        <span className="text-stone-400">X:</span>
-        <span className="text-emerald-400 font-bold">{Math.round(-pan.x / zoom)}</span>
-        <span className="text-stone-400">Y:</span>
-        <span className="text-emerald-400 font-bold">{Math.round(-pan.y / zoom)}</span>
-        <span className="text-stone-600">|</span>
-        <button
-          onClick={() => {
-            setPan({ x: 80, y: 60 });
-            setZoom(1);
-          }}
-          className="text-[11px] text-stone-300 hover:text-white hover:underline font-cairo transition-colors"
-          title="العودة لنقطة البداية (0, 0)"
-        >
-          المركز
-        </button>
-        <span className="text-stone-600">|</span>
-        <span className="text-amber-400 font-bold font-cairo">{Math.round(zoom * 100)}%</span>
-        <span className="text-stone-600">|</span>
-        <span className="text-stone-400 font-cairo text-[11px]">{currentMap.nodes.length} بطاقة</span>
-      </div>
 
       {/* Multi-Selection Alignment Toolbar */}
       {selectedNodeIds.size >= 2 && !readOnly && (
@@ -1833,115 +1811,117 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       </div>
 
       {/* ========================================================= */}
-      {/* DESKTOP STUDIO DOCK (hidden on mobile, visible on sm+)     */}
+      {/* CONTEXTUAL DESKTOP REFLECTION DOCK (Calm, Context-Aware)   */}
       {/* ========================================================= */}
       {!readOnly && (
-        <div className="hidden sm:flex absolute bottom-5 left-1/2 -translate-x-1/2 z-30 bg-white/95 backdrop-blur-md border border-stone-200 shadow-2xl px-3 py-2 rounded-2xl items-center gap-1.5 select-none animate-in fade-in slide-in-from-bottom-3 duration-200">
-          {/* Templates Launcher */}
-          {onOpenTemplates && (
-            <button
-              onClick={onOpenTemplates}
-              className="flex items-center gap-1.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs transition-all hover:scale-105 font-cairo"
-              title="معرض هياكل وقوالب الخرائط التدبرية"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-200" />
-              <span>قوالب الهياكل</span>
-            </button>
+        <div className="hidden sm:flex absolute bottom-5 left-1/2 -translate-x-1/2 z-30 bg-white/95 backdrop-blur-md border border-stone-200 shadow-xl px-3 py-2 rounded-2xl items-center gap-1.5 select-none animate-in fade-in slide-in-from-bottom-3 duration-200">
+          {selectedNodeIds.size === 1 ? (
+            // Contextual actions when a single node is selected
+            (() => {
+              const selectedId: string = Array.from(selectedNodeIds)[0] as string;
+              if (!selectedId) return null;
+              const selectedNode = currentMap.nodes.find((n) => n.id === selectedId);
+              return (
+                <div className="flex items-center gap-1.5 font-cairo">
+                  <span className="text-xs text-stone-500 px-1 font-tajawal">
+                    {selectedNode?.type === 'ayah' ? 'آية محددة' : 'بطاقة محددة'}:
+                  </span>
+
+                  <button
+                    onClick={() => handleStartConnecting(selectedId)}
+                    className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs transition-all"
+                    title="ربط هذه البطاقة ببطاقة أخرى"
+                  >
+                    <Link className="w-3.5 h-3.5 text-emerald-200" />
+                    <span>ربط بعلاقة</span>
+                  </button>
+
+                  <button
+                    onClick={handleAddNote}
+                    className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold px-3 py-2 rounded-xl transition-all"
+                    title="إضافة وقفة تدبرية"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>وقفة تدبرية</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleDeleteNode(selectedId)}
+                    className="flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold px-2.5 py-2 rounded-xl transition-all"
+                    title="حذف البطاقة"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>حذف</span>
+                  </button>
+
+                  <div className="h-4 w-px bg-stone-200 mx-0.5" />
+
+                  <button
+                    onClick={() => setSelectedNodeIds(new Set())}
+                    className="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg transition-colors"
+                    title="إلغاء التحديد"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+            })()
+          ) : (
+            // Default calm toolbar when nothing is selected
+            <>
+              {/* Primary Add Ayah */}
+              <button
+                onClick={onOpenSearch}
+                className="flex items-center gap-1.5 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold px-3.5 py-2 rounded-xl shadow-xs transition-all hover:scale-[1.02] font-cairo"
+                title="البحث في المصحف وإضافة آيات"
+              >
+                <Search className="w-3.5 h-3.5 text-emerald-200" />
+                <span>إضافة آية</span>
+              </button>
+
+              {/* Add Note Card */}
+              <button
+                onClick={handleAddNote}
+                className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold px-3 py-2 rounded-xl transition-all hover:scale-[1.02] font-cairo"
+                title="إضافة وقفة تدبرية"
+              >
+                <MessageSquare className="w-3.5 h-3.5 text-emerald-700" />
+                <span>وقفة تدبرية</span>
+              </button>
+
+              <div className="h-4 w-px bg-stone-200 mx-1" />
+
+              {/* Zoom Out */}
+              <button
+                onClick={() => setZoom(Math.max(Number((zoom - 0.15).toFixed(2)), 0.15))}
+                className="p-2 text-stone-600 hover:text-stone-950 hover:bg-stone-100 rounded-xl transition-colors"
+                title="تصغير (-)"
+              >
+                <ZoomOut className="w-4 h-4" />
+              </button>
+
+              {/* Reset Zoom & Pan to Origin */}
+              <button
+                onClick={() => {
+                  setZoom(1);
+                  setPan({ x: 80, y: 60 });
+                }}
+                className="text-[11px] font-mono font-bold text-stone-700 hover:bg-stone-100 px-2 py-1 rounded-lg transition-colors"
+                title="إعادة ضبط المقياس إلى 100%"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+
+              {/* Zoom In */}
+              <button
+                onClick={() => setZoom(Math.min(Number((zoom + 0.15).toFixed(2)), 3.0))}
+                className="p-2 text-stone-600 hover:text-stone-950 hover:bg-stone-100 rounded-xl transition-colors"
+                title="تكبير (+)"
+              >
+                <ZoomIn className="w-4 h-4" />
+              </button>
+            </>
           )}
-
-          {/* Quick Ayah Picker */}
-          {onOpenQuickAyahPicker && (
-            <button
-              onClick={onOpenQuickAyahPicker}
-              className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold px-3 py-2 rounded-xl transition-all hover:scale-105 font-cairo border border-stone-300"
-              title="إدراج آية بالرقم والسورة مباشرة"
-            >
-              <BookOpen className="w-3.5 h-3.5 text-emerald-700" />
-              <span>منتقي سريع</span>
-            </button>
-          )}
-
-          {/* Add Ayah via Quran Search */}
-          <button
-            onClick={onOpenSearch}
-            className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xs transition-all hover:scale-105 font-cairo"
-            title="البحث في المصحف وإضافة آيات"
-          >
-            <Search className="w-3.5 h-3.5 text-amber-300" />
-            <span>بحث الآيات</span>
-          </button>
-
-          {/* Add Note Card */}
-          <button
-            onClick={handleAddNote}
-            className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold px-3 py-2 rounded-xl transition-all hover:scale-105 font-cairo"
-            title="إضافة وقفة تدبرية"
-          >
-            <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-            <span>وقفة تدبرية</span>
-          </button>
-
-          {/* Add Concept Hub */}
-          <button
-            onClick={handleAddConcept}
-            className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold px-3 py-2 rounded-xl transition-all hover:scale-105 font-cairo"
-            title="إضافة فكرة أو محور مركزي"
-          >
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-            <span>محور رئيسي</span>
-          </button>
-
-          {/* Add Group Section Frame */}
-          <button
-            onClick={handleAddGroup}
-            className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold px-3 py-2 rounded-xl transition-all hover:scale-105 font-cairo"
-            title="إضافة قسم أو إطار تجميعي"
-          >
-            <Layers className="w-3.5 h-3.5 text-amber-600" />
-            <span>إطار تجميعي</span>
-          </button>
-
-          {/* Add Image */}
-          <button
-            onClick={handleAddImage}
-            className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold px-3 py-2 rounded-xl transition-all hover:scale-105 font-cairo"
-            title="إضافة رسم أو خريطة ذهنية"
-          >
-            <ImageIcon className="w-3.5 h-3.5 text-sky-600" />
-            <span>صورة</span>
-          </button>
-
-          <div className="h-5 w-px bg-stone-200 mx-1" />
-
-          {/* Zoom In */}
-          <button
-            onClick={() => setZoom(Math.min(Number((zoom + 0.15).toFixed(2)), 3.0))}
-            className="p-2 text-stone-600 hover:text-stone-950 hover:bg-stone-100 rounded-xl transition-colors"
-            title="تكبير (+)"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-
-          {/* Zoom Out */}
-          <button
-            onClick={() => setZoom(Math.max(Number((zoom - 0.15).toFixed(2)), 0.15))}
-            className="p-2 text-stone-600 hover:text-stone-950 hover:bg-stone-100 rounded-xl transition-colors"
-            title="تصغير (-)"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-
-          {/* Reset Zoom & Pan to Origin */}
-          <button
-            onClick={() => {
-              setZoom(1);
-              setPan({ x: 80, y: 60 });
-            }}
-            className="text-[11px] font-mono font-bold text-stone-700 hover:bg-stone-100 px-2 py-1 rounded-lg"
-            title="إعادة ضبط المقياس إلى 100% والعودة للمركز"
-          >
-            {Math.round(zoom * 100)}%
-          </button>
         </div>
       )}
 

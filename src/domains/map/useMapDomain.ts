@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { TadabburMap, CanvasNode, CanvasEdge } from '../../types';
 import { MindMapTemplate } from '../../lib/mindMapTemplates';
+import { validateImportedMap } from './mapValidator';
 import {
   getStoredMaps,
   getActiveMapId,
@@ -142,18 +143,18 @@ export function useMapDomain({ onNotify }: UseMapDomainProps = {}) {
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const imported = JSON.parse(event.target?.result as string) as TadabburMap;
-        if (!imported.title || !Array.isArray(imported.nodes)) {
-          throw new Error('الملف غير صالح');
+        const raw = JSON.parse(event.target?.result as string);
+        const result = validateImportedMap(raw);
+        if (!result.isValid || !result.map) {
+          onNotify?.(result.error || 'الملف المرفق ليس بصيغة خريطة تدبرية صالحة');
+          return;
         }
-        imported.id = `imported-${Date.now()}`;
-        imported.createdAt = Date.now();
-        imported.updatedAt = Date.now();
+        const imported = result.map;
         setMaps((prev) => [imported, ...prev]);
         setActiveMapIdState(imported.id);
         onNotify?.(`تم استيراد خريطة "${imported.title}" بنجاح`);
       } catch (err) {
-        alert('حدث خطأ أثناء استيراد الملف. يرجى التأكد من اختيار ملف خريطة تدبر صالح.');
+        onNotify?.('حدث خطأ أثناء قراءة الملف. يرجى التأكد من اختيار ملف JSON صالح.');
       }
     };
     reader.readAsText(file);
