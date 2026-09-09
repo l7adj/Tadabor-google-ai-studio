@@ -18,6 +18,7 @@ import {
 } from './arabicUtils';
 import { getRootEntry } from './quranRoots';
 import { QURAN_SEMANTIC_TOPICS } from './quranSemantics';
+import { registerCanonicalCorpus } from '../engine/quran/QuranAnchorValidator';
 
 let cachedCorpus: QuranCorpus | null = null;
 let isFetchingCorpus = false;
@@ -109,6 +110,7 @@ export async function loadQuranCorpus(): Promise<QuranCorpus> {
       const raw = fs.readFileSync(filePath, 'utf-8');
       const data: QuranCorpus = JSON.parse(raw);
       cachedCorpus = data;
+      registerCanonicalCorpus(data);
       if (!indexedAyahs) {
         indexedAyahs = buildIndexedAyahs(data);
       }
@@ -126,6 +128,7 @@ export async function loadQuranCorpus(): Promise<QuranCorpus> {
       }
       const data: QuranCorpus = await res.json();
       cachedCorpus = data;
+      registerCanonicalCorpus(data);
 
       if (!indexedAyahs) {
         indexedAyahs = buildIndexedAyahs(data);

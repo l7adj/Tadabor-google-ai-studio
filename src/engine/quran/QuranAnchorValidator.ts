@@ -19,6 +19,88 @@ export const SURAH_AYAH_COUNTS: readonly number[] = [
   5, 4, 5, 6
 ];
 
+export interface CanonicalVerseData {
+  textUthmani: string;
+  words: string[];
+}
+
+export type CanonicalQuranDataProvider = (surah: number, ayah: number) => CanonicalVerseData | null;
+
+let customCorpusProvider: CanonicalQuranDataProvider | null = null;
+let canonicalMap: Map<string, CanonicalVerseData> | null = null;
+
+/**
+ * Registers a canonical Quran corpus for full word and character boundary validations
+ */
+export function registerCanonicalCorpus(corpus: {
+  surahs: Array<{
+    id?: number;
+    number?: number;
+    ayahs: Array<{ id?: number; number?: number; numberInSurah?: number; ayahNumberInSurah?: number; textUthmani: string }>;
+  }>;
+}): void {
+  const map = new Map<string, CanonicalVerseData>();
+  for (const s of corpus.surahs) {
+    const surahId = s.number ?? s.id ?? 0;
+    for (const a of s.ayahs) {
+      const uText = (a.textUthmani || '').trim();
+      const words = uText.split(/\s+/).filter(Boolean);
+      const ayahNum = a.numberInSurah ?? a.ayahNumberInSurah ?? a.number ?? a.id ?? 0;
+      map.set(`${surahId}:${ayahNum}`, {
+        textUthmani: uText,
+        words
+      });
+    }
+  }
+  canonicalMap = map;
+}
+
+/**
+ * Registers a custom canonical Quran data provider
+ */
+export function setCanonicalQuranProvider(provider: CanonicalQuranDataProvider | null): void {
+  customCorpusProvider = provider;
+}
+
+/**
+ * Ensures canonical corpus is loaded in Node.js environments (e.g. testing)
+ */
+export async function ensureCanonicalCorpusLoaded(): Promise<boolean> {
+  if (canonicalMap && canonicalMap.size > 0) return true;
+  if (typeof window === 'undefined') {
+    try {
+      const fs = await import('fs');
+      const path = await import('path');
+      const p = path.join(process.cwd(), 'public', 'quran-data.json');
+      if (fs.existsSync(p)) {
+        const raw = fs.readFileSync(p, 'utf-8');
+        const json = JSON.parse(raw);
+        registerCanonicalCorpus(json);
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolves canonical verse data for a specific surah and ayah
+ */
+export function getCanonicalVerse(surah: number, ayah: number): CanonicalVerseData | null {
+  if (customCorpusProvider) {
+    const res = customCorpusProvider(surah, ayah);
+    if (res) return res;
+  }
+
+  if (canonicalMap) {
+    return canonicalMap.get(`${surah}:${ayah}`) || null;
+  }
+
+  return null;
+}
+
 export interface ValidationResult {
   isValid: boolean;
   errorCode?: string;
@@ -70,6 +152,32 @@ export function validateQuranPosition(pos: QuranPosition): ValidationResult {
     };
   }
 
+  // Canonical Data Check against actual Quran corpus
+  const canonicalVerse = getCanonicalVerse(pos.surah, pos.ayah);
+  if (canonicalVerse) {
+    if (pos.word !== undefined) {
+      const wordCount = canonicalVerse.words.length;
+      if (pos.word >= wordCount) {
+        return {
+          isValid: false,
+          errorCode: 'WORD_OUT_OF_BOUNDS',
+          errorMessage: `الكلمة رقم (${pos.word + 1}) غير موجودة في الآية ${pos.surah}:${pos.ayah} (إجمالي كلمات الآية: ${wordCount})`
+        };
+      }
+
+      if (pos.char !== undefined) {
+        const wordText = canonicalVerse.words[pos.word];
+        if (pos.char >= wordText.length) {
+          return {
+            isValid: false,
+            errorCode: 'CHAR_OUT_OF_BOUNDS',
+            errorMessage: `الحرف رقم (${pos.char + 1}) غير موجود في الكلمة «${wordText}» (أحرف الكلمة: ${wordText.length})`
+          };
+        }
+      }
+    }
+  }
+
   return { isValid: true };
 }
 
@@ -96,7 +204,15 @@ export function validateQuranAnchor(anchor: QuranAnchorV2): ValidationResult {
     };
   }
 
-  const posValidation = validateQuranPosition({ surah, ayah });
+  const wordIndex = anchor.wordIndex;
+  const charIndex = anchor.charIndex;
+
+  const posValidation = validateQuranPosition({
+    surah,
+    ayah,
+    word: wordIndex,
+    char: charIndex
+  });
   if (!posValidation.isValid) {
     return posValidation;
   }
@@ -117,6 +233,8 @@ export function validateQuranAnchor(anchor: QuranAnchorV2): ValidationResult {
     return { isValid: true };
   }
 
+  const canonicalVerse = getCanonicalVerse(surah, ayah);
+
   // Range validation for word range
   if (anchor.level === 'word_range') {
     const sWord = anchor.startWord ?? anchor.wordIndex;
@@ -134,6 +252,16 @@ export function validateQuranAnchor(anchor: QuranAnchorV2): ValidationResult {
         errorCode: 'INVERTED_WORD_RANGE',
         errorMessage: `بداية نطاق الكلمات (${sWord}) أكبر من نهايته (${eWord})`
       };
+    }
+    if (canonicalVerse) {
+      const wordCount = canonicalVerse.words.length;
+      if (eWord >= wordCount) {
+        return {
+          isValid: false,
+          errorCode: 'WORD_RANGE_OUT_OF_BOUNDS',
+          errorMessage: `نهاية نطاق الكلمات (${eWord + 1}) تتجاوز إجمالي كلمات الآية (${wordCount})`
+        };
+      }
     }
   }
 
@@ -154,6 +282,16 @@ export function validateQuranAnchor(anchor: QuranAnchorV2): ValidationResult {
         errorCode: 'INVERTED_CHAR_RANGE',
         errorMessage: `بداية نطاق الأحرف (${sChar}) أكبر من نهايته (${eChar})`
       };
+    }
+    if (canonicalVerse && wordIndex !== undefined && wordIndex < canonicalVerse.words.length) {
+      const wordLen = canonicalVerse.words[wordIndex].length;
+      if (eChar >= wordLen) {
+        return {
+          isValid: false,
+          errorCode: 'CHAR_RANGE_OUT_OF_BOUNDS',
+          errorMessage: `نهاية نطاق الأحرف (${eChar + 1}) تتجاوز طول الكلمة «${canonicalVerse.words[wordIndex]}» (${wordLen})`
+        };
+      }
     }
   }
 

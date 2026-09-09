@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Header } from './components/Header';
 import { TadabburCanvas } from './components/Canvas/TadabburCanvas';
 import { QuranSearchPanel } from './components/Search/QuranSearchPanel';
@@ -30,8 +30,35 @@ export default function App() {
   // Sync active map
   const currentMap = maps.find((m) => m.id === activeMapId) || maps[0] || STARTER_MAPS[0];
 
+  // Persistence State: Decoupled & debounced persistence pipeline
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    saveStoredMaps(maps);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    // Debounce disk/localStorage write operations so rapid commits do not freeze the main thread
+    saveTimeoutRef.current = setTimeout(() => {
+      saveStoredMaps(maps);
+    }, 750);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, [maps]);
+
+  // Flush persistence synchronously before tab/browser unloads
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      saveStoredMaps(maps);
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [maps]);
 
   useEffect(() => {

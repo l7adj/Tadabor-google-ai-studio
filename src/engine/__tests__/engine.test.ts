@@ -309,6 +309,67 @@ console.log('--- Starting Quran Engine Verification Tests ---');
   console.log('✓ Test 6 Passed: Central Selection APIs & Unified Pipeline (Selection -> Anchor -> Relationship)');
 }
 
+// Test 7: Real Quran Data Canonical Validation (P3 Requirement)
+{
+  const { ensureCanonicalCorpusLoaded } = await import('../quran/QuranAnchorValidator');
+  await ensureCanonicalCorpusLoaded();
+
+  // Ayat Al-Kursi (2:255) has exactly 50 words
+  const validWordPos = validateQuranPosition({ surah: 2, ayah: 255, word: 49 });
+  assert(validWordPos.isValid, 'Word 49 (last word) of Ayat Al-Kursi is valid');
+
+  const invalidWordPos = validateQuranPosition({ surah: 2, ayah: 255, word: 50 });
+  assert(!invalidWordPos.isValid, 'Word 50 of Ayat Al-Kursi is rejected as out of bounds');
+  assert(invalidWordPos.errorCode === 'WORD_OUT_OF_BOUNDS', 'Correct error code WORD_OUT_OF_BOUNDS');
+
+  // Word 0 is "اللَّهُ" (7 characters with marks)
+  const validCharPos = validateQuranPosition({ surah: 2, ayah: 255, word: 0, char: 0 });
+  assert(validCharPos.isValid, 'First character of first word in 2:255 is valid');
+
+  const invalidCharPos = validateQuranPosition({ surah: 2, ayah: 255, word: 0, char: 20 });
+  assert(!invalidCharPos.isValid, 'Char 20 in 7-character word is rejected');
+  assert(invalidCharPos.errorCode === 'CHAR_OUT_OF_BOUNDS', 'Correct error code CHAR_OUT_OF_BOUNDS');
+
+  console.log('✓ Test 7 Passed: Real Quran Data Canonical Validation (Words & Chars boundaries verified)');
+}
+
+// Test 8: Multi-selection State Machine & Synchronization (P3.5 Requirement)
+{
+  const engine = new QuranSelectionEngine();
+
+  const selA = createWordSelection({ surah: 1, ayah: 1, wordIndex: 0, wordText: 'بِسْمِ' });
+  const selB = createWordSelection({ surah: 1, ayah: 1, wordIndex: 1, wordText: 'اللَّهِ' });
+
+  // Toggle A: multiSelections = [A], activeSelection = A
+  engine.toggleMultiSelection(selA);
+  assert(engine.getMultiSelections().length === 1, 'Multi has 1 item');
+  assert(engine.getActiveSelection()?.id === selA.id, 'Active selection is A');
+
+  // Toggle B: multiSelections = [A, B], activeSelection = composite[A, B]
+  engine.toggleMultiSelection(selB);
+  assert(engine.getMultiSelections().length === 2, 'Multi has 2 items');
+  assert(engine.getActiveSelection()?.type === 'multi', 'Active selection is composite multi');
+
+  // Toggle B off: multiSelections = [A], activeSelection = A
+  engine.toggleMultiSelection(selB);
+  assert(engine.getMultiSelections().length === 1, 'Multi has 1 item after toggling B off');
+  assert(engine.getActiveSelection()?.id === selA.id, 'Active selection is cleanly synced back to A');
+
+  // Toggle A off: multiSelections = [], activeSelection = null
+  engine.toggleMultiSelection(selA);
+  assert(engine.getMultiSelections().length === 0, 'Multi is empty');
+  assert(engine.getActiveSelection() === null, 'Active selection is null after removing last item');
+
+  // Clear multi selection clears composite activeSelection
+  engine.selectMultiple([selA, selB]);
+  assert(engine.getActiveSelection()?.type === 'multi', 'Composite active');
+  engine.clearMultiSelection();
+  assert(engine.getMultiSelections().length === 0, 'Multi is empty');
+  assert(engine.getActiveSelection() === null, 'Composite active cleared cleanly');
+
+  console.log('✓ Test 8 Passed: Multi-Selection State Machine & Synchronization (No stale composite state)');
+}
+
 console.log('\n========================================');
-console.log('ALL 6 QURAN ENGINE TESTS PASSED WITH 100% SUCCESS');
+console.log('ALL 8 QURAN ENGINE TESTS PASSED WITH 100% SUCCESS');
 console.log('========================================\n');

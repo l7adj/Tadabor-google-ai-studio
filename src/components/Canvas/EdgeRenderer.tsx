@@ -197,20 +197,25 @@ function getAutoHandles(
   }
 }
 
-export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
-  edge,
-  sourceNode,
-  targetNode,
-  onUpdateEdge,
-  onDeleteEdge,
-  readOnly = false
-}) => {
-  const [isEditingLabel, setIsEditingLabel] = useState(false);
-  const [labelInput, setLabelInput] = useState(edge.label || '');
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
-
+// Pure function to calculate edge coordinates, path data, and midpoint without React rendering
+export function calculateEdgeGeometry(
+  edge: CanvasEdge,
+  sourceNode: CanvasNode,
+  targetNode: CanvasNode
+): {
+  pathData: string;
+  midX: number;
+  midY: number;
+  sX: number;
+  sY: number;
+  tX: number;
+  tY: number;
+  distance: number;
+  isSameNode: boolean;
+  sCoord: { x: number; y: number; isWordAnchor: boolean; isCharAnchor?: boolean };
+  tCoord: { x: number; y: number; isWordAnchor: boolean; isCharAnchor?: boolean };
+} {
   const isSameNode = sourceNode.id === targetNode.id;
-  const hasWordLevelAnchor = edge.sourceWordIndex !== undefined || edge.targetWordIndex !== undefined;
 
   // Compute Handles
   const autoHandles = getAutoHandles(sourceNode, targetNode);
@@ -266,7 +271,6 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
     const curvatureOffset = Math.min(Math.max(distance * 0.35, 40), 160);
 
     if (sCoord.isWordAnchor) {
-      // Direct word anchor leaves vertically or diagonally
       if (tY < sY) cy1 -= curvatureOffset * 0.7;
       else cy1 += curvatureOffset * 0.7;
     } else {
@@ -277,7 +281,6 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
     }
 
     if (tCoord.isWordAnchor) {
-      // Direct word target anchor arrives smoothly
       if (sY < tY) cy2 -= curvatureOffset * 0.7;
       else cy2 += curvatureOffset * 0.7;
     } else {
@@ -293,6 +296,28 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
     midX = 0.125 * sX + 0.375 * cx1 + 0.375 * cx2 + 0.125 * tX;
     midY = 0.125 * sY + 0.375 * cy1 + 0.375 * cy2 + 0.125 * tY;
   }
+
+  return { pathData, midX, midY, sX, sY, tX, tY, distance, isSameNode, sCoord, tCoord };
+}
+
+export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
+  edge,
+  sourceNode,
+  targetNode,
+  onUpdateEdge,
+  onDeleteEdge,
+  readOnly = false
+}) => {
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [labelInput, setLabelInput] = useState(edge.label || '');
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+
+  const { pathData, midX, midY, sX, sY, tX, tY, isSameNode, tCoord } = calculateEdgeGeometry(
+    edge,
+    sourceNode,
+    targetNode
+  );
+  const hasWordLevelAnchor = edge.sourceWordIndex !== undefined || edge.targetWordIndex !== undefined;
 
   const handleSaveLabel = () => {
     onUpdateEdge(edge.id, { label: labelInput.trim() || undefined });
@@ -311,6 +336,7 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
 
   const arrowMarkerId = `arrow-${edge.id}`;
   const lineColor = edge.color || '#10b981';
+  const curveType = edge.curveType || 'bezier';
 
   const sourceNodeTitle =
     sourceNode.type === 'ayah' && sourceNode.ayahData
@@ -335,7 +361,7 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
     : targetNodeTitle;
 
   return (
-    <g className="group/edge">
+    <g id={`edge-group-${edge.id}`} className="group/edge">
       <defs>
         <marker
           id={arrowMarkerId}
@@ -358,6 +384,7 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
 
       {/* High-contrast underlay halo ensuring visibility over any card frame and background */}
       <path
+        data-edge-path={edge.id}
         d={pathData}
         fill="none"
         stroke="rgba(255, 255, 255, 0.95)"
@@ -368,6 +395,7 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
 
       {/* Invisible wider hit-box path for easy click and hover */}
       <path
+        data-edge-path={edge.id}
         d={pathData}
         fill="none"
         stroke="transparent"
@@ -378,6 +406,7 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
 
       {/* Visible colored line */}
       <path
+        data-edge-path={edge.id}
         d={pathData}
         fill="none"
         stroke={lineColor}
@@ -397,6 +426,7 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
       {/* Optional Animated Pulse Dash */}
       {edge.animated && (
         <path
+          data-edge-path={edge.id}
           d={pathData}
           fill="none"
           stroke="#ffffff"
@@ -408,25 +438,26 @@ export const EdgeRenderer: React.FC<EdgeRendererProps> = ({
 
       {/* Source Anchor Pin (نقطة الانطلاق / من) */}
       <g className="pointer-events-none">
-        <circle cx={sX} cy={sY} r={8} fill={lineColor} fillOpacity={0.25} className="animate-pulse" />
-        <circle cx={sX} cy={sY} r={4.5} fill="#ffffff" stroke={lineColor} strokeWidth={2} />
-        <circle cx={sX} cy={sY} r={2} fill={lineColor} />
+        <circle data-edge-pin-s={edge.id} cx={sX} cy={sY} r={8} fill={lineColor} fillOpacity={0.25} className="animate-pulse" />
+        <circle data-edge-pin-s={edge.id} cx={sX} cy={sY} r={4.5} fill="#ffffff" stroke={lineColor} strokeWidth={2} />
+        <circle data-edge-pin-s={edge.id} cx={sX} cy={sY} r={2} fill={lineColor} />
       </g>
 
       {/* Target Anchor Pin (نقطة الوصول / إلى) */}
       <g className="pointer-events-none">
         {tCoord.isWordAnchor ? (
           <>
-            <circle cx={tX} cy={tY} r={9} fill={lineColor} fillOpacity={0.25} />
-            <circle cx={tX} cy={tY} r={4} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
+            <circle data-edge-pin-t={edge.id} cx={tX} cy={tY} r={9} fill={lineColor} fillOpacity={0.25} />
+            <circle data-edge-pin-t={edge.id} cx={tX} cy={tY} r={4} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
           </>
         ) : (
-          <circle cx={tX} cy={tY} r={4} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
+          <circle data-edge-pin-t={edge.id} cx={tX} cy={tY} r={4} fill={lineColor} stroke="#ffffff" strokeWidth={1.5} />
         )}
       </g>
 
       {/* Center Label and Action Badge */}
       <foreignObject
+        id={`edge-foreign-${edge.id}`}
         x={midX - 140}
         y={midY - 26}
         width={280}

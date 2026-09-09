@@ -46,7 +46,7 @@ import { NoteNodeCard } from './Nodes/NoteNodeCard';
 import { ImageNodeCard } from './Nodes/ImageNodeCard';
 import { ConceptNodeCard } from './Nodes/ConceptNodeCard';
 import { GroupNodeCard } from './Nodes/GroupNodeCard';
-import { EdgeRenderer, getPreciseNodeAnchor } from './EdgeRenderer';
+import { EdgeRenderer, getPreciseNodeAnchor, calculateEdgeGeometry } from './EdgeRenderer';
 import { CanvasMiniMap } from './CanvasMiniMap';
 import { calculateMindMapLayout } from '../../lib/mindMapLayout';
 import { RelationConfigModal, PendingConnectionData } from './RelationConfigModal';
@@ -79,10 +79,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Pan & Viewport State (Truly unbounded infinite canvas like TradingView)
+  // Canonical Domain State: Pan & Viewport (TradingView style unbounded canvas)
   const [pan, setPan] = useState({ x: currentMap.panX || 80, y: currentMap.panY || 60 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [startPan, setStartPan] = useState({ x: 0, y: 0 });
   const [isSpacePressed, setIsSpacePressed] = useState(false);
 
   // Interaction Mode: 'select' (default pointer) or 'pan' (TradingView hand tool)
@@ -92,12 +90,31 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
   const [gridType, setGridType] = useState<CanvasGridType>(currentMap.gridType || 'dots');
   const [snapToGrid, setSnapToGrid] = useState<boolean>(currentMap.snapToGrid ?? false);
 
-  // Mouse Dragging State
-  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
-  const [dragInitialMouse, setDragInitialMouse] = useState({ x: 0, y: 0 });
-  const [dragInitialNodePositions, setDragInitialNodePositions] = useState<Map<string, { x: number; y: number }>>(
-    new Map()
-  );
+  // Layer 1: Interaction State (Lives strictly in refs - NEVER in high-frequency React state)
+  const interactionRef = useRef<{
+    mode: 'idle' | 'panning' | 'dragging';
+    startMouse: { x: number; y: number };
+    initialPan: { x: number; y: number };
+    transientPan: { x: number; y: number };
+    draggedNodeId: string | null;
+    initialNodePositions: Map<string, { x: number; y: number }>;
+    transientDelta: { x: number; y: number };
+    hasMoved: boolean;
+    rafId: number | null;
+  }>({
+    mode: 'idle',
+    startMouse: { x: 0, y: 0 },
+    initialPan: { x: 0, y: 0 },
+    transientPan: { x: 0, y: 0 },
+    draggedNodeId: null,
+    initialNodePositions: new Map(),
+    transientDelta: { x: 0, y: 0 },
+    hasMoved: false,
+    rafId: null
+  });
+
+  // Layer 3: Visual Interaction Refs (Mouse canvas pos lives in ref to prevent continuous canvas re-renders)
+  const mouseCanvasPosRef = useRef({ x: 0, y: 0 });
 
   // Multi-Touch Gesture Tracking (Mobile First Engine)
   const touchDataRef = useRef<{
@@ -156,10 +173,9 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     anchor?: QuranAnchor;
   } | null>(null);
   const [pendingConnection, setPendingConnection] = useState<PendingConnectionData | null>(null);
-  const [mouseCanvasPos, setMouseCanvasPos] = useState({ x: 0, y: 0 });
 
-  // Mini-map & Modals
-  const [isMiniMapOpen, setIsMiniMapOpen] = useState(() => (typeof window !== 'undefined' ? window.innerWidth >= 1024 : false));
+  // Mini-map & Modals (MiniMap closed by default per clean workspace guidelines)
+  const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [showMobileToolsSheet, setShowMobileToolsSheet] = useState(false);
   const [viewportDims, setViewportDims] = useState({ width: 1200, height: 800 });
@@ -291,6 +307,108 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     [snapToGrid]
   );
 
+  // Sync ref mirrors for latest canonical state
+  const currentMapRef = useRef(currentMap);
+  currentMapRef.current = currentMap;
+  const panRef = useRef(pan);
+  panRef.current = pan;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+
+  // =========================================================================
+  // LAYER 3: TRANSIENT VISUAL TRANSFORM PIPELINE (GPU ACCELERATED & RAF BATCHED)
+  // =========================================================================
+
+  const applyTransientNodeTransforms = (
+    deltaX: number,
+    deltaY: number,
+    initialPositions: Map<string, { x: number; y: number }>
+  ) => {
+    // 1. Move card DOM elements
+    initialPositions.forEach((initial, nodeId) => {
+      const cardEl = document.getElementById(`node-card-${nodeId}`);
+      if (cardEl) {
+        const curX = snap(Math.round(initial.x + deltaX));
+        const curY = snap(Math.round(initial.y + deltaY));
+        cardEl.style.transform = `translate3d(${curX}px, ${curY}px, 0)`;
+      }
+    });
+
+    // 2. Update connected edges directly in SVG DOM
+    currentMapRef.current.edges.forEach((edge) => {
+      const isSourceMoving = initialPositions.has(edge.sourceId);
+      const isTargetMoving = initialPositions.has(edge.targetId);
+      if (!isSourceMoving && !isTargetMoving) return;
+
+      const sourceNode = currentMapRef.current.nodes.find((n) => n.id === edge.sourceId);
+      const targetNode = currentMapRef.current.nodes.find((n) => n.id === edge.targetId);
+      if (!sourceNode || !targetNode) return;
+
+      const sInit = initialPositions.get(edge.sourceId);
+      const tInit = initialPositions.get(edge.targetId);
+
+      const virtualSource: CanvasNode = sInit
+        ? { ...sourceNode, x: snap(Math.round(sInit.x + deltaX)), y: snap(Math.round(sInit.y + deltaY)) }
+        : sourceNode;
+
+      const virtualTarget: CanvasNode = tInit
+        ? { ...targetNode, x: snap(Math.round(tInit.x + deltaX)), y: snap(Math.round(tInit.y + deltaY)) }
+        : targetNode;
+
+      const geom = calculateEdgeGeometry(edge, virtualSource, virtualTarget);
+
+      // Update path d attributes
+      const paths = document.querySelectorAll(`[data-edge-path="${edge.id}"]`);
+      paths.forEach((p) => p.setAttribute('d', geom.pathData));
+
+      // Update pin coordinates
+      const sPins = document.querySelectorAll(`[data-edge-pin-s="${edge.id}"]`);
+      sPins.forEach((p) => {
+        p.setAttribute('cx', String(geom.sX));
+        p.setAttribute('cy', String(geom.sY));
+      });
+      const tPins = document.querySelectorAll(`[data-edge-pin-t="${edge.id}"]`);
+      tPins.forEach((p) => {
+        p.setAttribute('cx', String(geom.tX));
+        p.setAttribute('cy', String(geom.tY));
+      });
+
+      // Update midpoint foreignObject position
+      const fo = document.getElementById(`edge-foreign-${edge.id}`);
+      if (fo) {
+        fo.setAttribute('x', String(geom.midX - 140));
+        fo.setAttribute('y', String(geom.midY - 26));
+      }
+    });
+  };
+
+  const clearTransientNodeTransforms = (nodeIds: Iterable<string>) => {
+    for (const nodeId of nodeIds) {
+      const cardEl = document.getElementById(`node-card-${nodeId}`);
+      if (cardEl) {
+        cardEl.style.transform = '';
+      }
+    }
+  };
+
+  const applyTransientPanTransforms = (panX: number, panY: number, zoomLevel: number) => {
+    const svgContent = document.getElementById('canvas-svg-content');
+    if (svgContent) {
+      svgContent.setAttribute('transform', `translate(${panX}, ${panY}) scale(${zoomLevel})`);
+    }
+    const nodesContainer = document.getElementById('canvas-nodes-container');
+    if (nodesContainer) {
+      nodesContainer.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`;
+    }
+  };
+
+  const clearTransientPanTransforms = () => {
+    const nodesContainer = document.getElementById('canvas-nodes-container');
+    if (nodesContainer) {
+      nodesContainer.style.transform = '';
+    }
+  };
+
   // Zoom centered on cursor position (Mouse Wheel)
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -319,8 +437,17 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       e.target === containerRef.current ||
       (e.target as HTMLElement).id === 'canvas-svg-layer'
     ) {
-      setIsPanning(true);
-      setStartPan({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      interactionRef.current = {
+        mode: 'panning',
+        startMouse: { x: e.clientX, y: e.clientY },
+        initialPan: { ...panRef.current },
+        transientPan: { ...panRef.current },
+        draggedNodeId: null,
+        initialNodePositions: new Map(),
+        transientDelta: { x: 0, y: 0 },
+        hasMoved: false,
+        rafId: null
+      };
       if (!e.shiftKey) {
         setSelectedNodeIds(new Set());
       }
@@ -358,61 +485,160 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     }
     setSelectedNodeIds(nextSelection);
 
-    setDraggingNodeId(node.id);
-    setDragInitialMouse({ x: e.clientX, y: e.clientY });
-
     const initialPositions = new Map<string, { x: number; y: number }>();
-    currentMap.nodes.forEach((n) => {
+    currentMapRef.current.nodes.forEach((n) => {
       if (nextSelection.has(n.id) || n.id === node.id) {
         initialPositions.set(n.id, { x: n.x, y: n.y });
       }
     });
-    setDragInitialNodePositions(initialPositions);
+
+    interactionRef.current = {
+      mode: 'dragging',
+      startMouse: { x: e.clientX, y: e.clientY },
+      initialPan: { ...panRef.current },
+      transientPan: { ...panRef.current },
+      draggedNodeId: node.id,
+      initialNodePositions: initialPositions,
+      transientDelta: { x: 0, y: 0 },
+      hasMoved: false,
+      rafId: null
+    };
   };
 
-  // Global Mouse Move
+  // Global Mouse Move (RAF-batched transient visual updates, 0 React re-renders)
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (containerRef.current) {
+    // 1. If pulling connection wire, update wire in DOM directly
+    if (connectingSource && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      setMouseCanvasPos({
-        x: (e.clientX - rect.left - pan.x) / zoom,
-        y: (e.clientY - rect.top - pan.y) / zoom
-      });
+      const cX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
+      const cY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
+      mouseCanvasPosRef.current = { x: cX, y: cY };
+
+      const wireUnderlay = document.getElementById('live-wire-underlay');
+      if (wireUnderlay) {
+        wireUnderlay.setAttribute('x2', String(cX));
+        wireUnderlay.setAttribute('y2', String(cY));
+      }
+      const wireStroke = document.getElementById('live-wire-stroke');
+      if (wireStroke) {
+        wireStroke.setAttribute('x2', String(cX));
+        wireStroke.setAttribute('y2', String(cY));
+      }
+      const wireHead = document.getElementById('live-wire-head');
+      if (wireHead) {
+        wireHead.setAttribute('cx', String(cX));
+        wireHead.setAttribute('cy', String(cY));
+      }
     }
 
-    if (isPanning) {
-      setPan({
-        x: e.clientX - startPan.x,
-        y: e.clientY - startPan.y
-      });
-    } else if (draggingNodeId && !readOnly) {
-      const deltaX = (e.clientX - dragInitialMouse.x) / zoom;
-      const deltaY = (e.clientY - dragInitialMouse.y) / zoom;
+    // 2. If Canvas Panning is active
+    if (interactionRef.current.mode === 'panning') {
+      const deltaX = e.clientX - interactionRef.current.startMouse.x;
+      const deltaY = e.clientY - interactionRef.current.startMouse.y;
+      if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+        interactionRef.current.hasMoved = true;
+      }
+      interactionRef.current.transientPan = {
+        x: interactionRef.current.initialPan.x + deltaX,
+        y: interactionRef.current.initialPan.y + deltaY
+      };
 
-      const updatedNodes = currentMap.nodes.map((n) => {
-        const initial = dragInitialNodePositions.get(n.id);
-        if (initial) {
-          return {
-            ...n,
-            x: snap(Math.round(initial.x + deltaX)),
-            y: snap(Math.round(initial.y + deltaY))
-          };
-        }
-        return n;
-      });
+      if (!interactionRef.current.rafId) {
+        interactionRef.current.rafId = requestAnimationFrame(() => {
+          interactionRef.current.rafId = null;
+          applyTransientPanTransforms(
+            interactionRef.current.transientPan.x,
+            interactionRef.current.transientPan.y,
+            zoomRef.current
+          );
+        });
+      }
+      return;
+    }
 
-      onUpdateMap({ ...currentMap, nodes: updatedNodes, panX: pan.x, panY: pan.y });
+    // 3. If Node Dragging is active
+    if (interactionRef.current.mode === 'dragging' && !readOnly) {
+      const deltaX = (e.clientX - interactionRef.current.startMouse.x) / zoomRef.current;
+      const deltaY = (e.clientY - interactionRef.current.startMouse.y) / zoomRef.current;
+
+      if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+        interactionRef.current.hasMoved = true;
+      }
+
+      interactionRef.current.transientDelta = { x: deltaX, y: deltaY };
+
+      if (!interactionRef.current.rafId) {
+        interactionRef.current.rafId = requestAnimationFrame(() => {
+          interactionRef.current.rafId = null;
+          applyTransientNodeTransforms(
+            interactionRef.current.transientDelta.x,
+            interactionRef.current.transientDelta.y,
+            interactionRef.current.initialNodePositions
+          );
+        });
+      }
+      return;
     }
   };
 
-  // Mouse Up
+  // Mouse Up (Commits exactly ONE canonical state update and ONE history entry)
   const handleMouseUp = () => {
-    if (isPanning) {
-      setIsPanning(false);
+    // 1. Complete Canvas Panning
+    if (interactionRef.current.mode === 'panning') {
+      if (interactionRef.current.rafId) {
+        cancelAnimationFrame(interactionRef.current.rafId);
+        interactionRef.current.rafId = null;
+      }
+      if (interactionRef.current.hasMoved) {
+        setPan(interactionRef.current.transientPan);
+      }
+      clearTransientPanTransforms();
+      interactionRef.current.mode = 'idle';
+      return;
     }
-    if (draggingNodeId) {
-      setDraggingNodeId(null);
-      pushToHistory(currentMap.nodes, currentMap.edges);
+
+    // 2. Complete Node Dragging
+    if (interactionRef.current.mode === 'dragging') {
+      if (interactionRef.current.rafId) {
+        cancelAnimationFrame(interactionRef.current.rafId);
+        interactionRef.current.rafId = null;
+      }
+
+      const { hasMoved, initialNodePositions, transientDelta } = interactionRef.current;
+
+      if (hasMoved) {
+        const updatedNodes = currentMapRef.current.nodes.map((n) => {
+          const initial = initialNodePositions.get(n.id);
+          if (initial) {
+            return {
+              ...n,
+              x: snap(Math.round(initial.x + transientDelta.x)),
+              y: snap(Math.round(initial.y + transientDelta.y))
+            };
+          }
+          return n;
+        });
+
+        // Clear manual inline transforms on DOM cards before committing React state
+        clearTransientNodeTransforms(initialNodePositions.keys());
+
+        // Commit ONE canonical state update
+        onUpdateMap({
+          ...currentMapRef.current,
+          nodes: updatedNodes,
+          panX: panRef.current.x,
+          panY: panRef.current.y,
+          updatedAt: Date.now()
+        });
+
+        // Push ONE history entry
+        pushToHistory(updatedNodes, currentMapRef.current.edges);
+      } else {
+        clearTransientNodeTransforms(initialNodePositions.keys());
+      }
+
+      interactionRef.current.mode = 'idle';
+      return;
     }
   };
 
@@ -433,8 +659,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
         active: true,
         mode: 'pinch',
         startTouches: [{ x: t1.clientX, y: t1.clientY }, { x: t2.clientX, y: t2.clientY }],
-        startPan: { ...pan },
-        startZoom: zoom,
+        startPan: { ...panRef.current },
+        startZoom: zoomRef.current,
         initialDistance: dist,
         initialMidpoint: mid,
         draggedNodeId: null,
@@ -447,8 +673,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
         active: true,
         mode: 'pan',
         startTouches: [{ x: t.clientX, y: t.clientY }],
-        startPan: { ...pan },
-        startZoom: zoom,
+        startPan: { ...panRef.current },
+        startZoom: zoomRef.current,
         initialDistance: 0,
         initialMidpoint: { x: 0, y: 0 },
         draggedNodeId: null,
@@ -491,7 +717,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     }
 
     const initialPositions = new Map<string, { x: number; y: number }>();
-    currentMap.nodes.forEach((n) => {
+    currentMapRef.current.nodes.forEach((n) => {
       if (nextSelection.has(n.id) || n.id === node.id) {
         initialPositions.set(n.id, { x: n.x, y: n.y });
       }
@@ -501,8 +727,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       active: true,
       mode: 'node',
       startTouches: [{ x: t.clientX, y: t.clientY }],
-      startPan: { ...pan },
-      startZoom: zoom,
+      startPan: { ...panRef.current },
+      startZoom: zoomRef.current,
       initialDistance: 0,
       initialMidpoint: { x: 0, y: 0 },
       draggedNodeId: node.id,
@@ -530,7 +756,6 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
         y: (t1.clientY + t2.clientY) / 2
       };
 
-      // Zoom centered on the touch midpoint
       const startMid = touchDataRef.current.initialMidpoint;
       const initialPan = touchDataRef.current.startPan;
       const initialZoom = touchDataRef.current.startZoom;
@@ -538,8 +763,19 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       const newPanX = currentMid.x - (startMid.x - initialPan.x) * (targetZoom / initialZoom);
       const newPanY = currentMid.y - (startMid.y - initialPan.y) * (targetZoom / initialZoom);
 
-      setZoom(targetZoom);
-      setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
+      touchDataRef.current.startPan = { x: Math.round(newPanX), y: Math.round(newPanY) };
+      touchDataRef.current.startZoom = targetZoom;
+
+      if (!interactionRef.current.rafId) {
+        interactionRef.current.rafId = requestAnimationFrame(() => {
+          interactionRef.current.rafId = null;
+          applyTransientPanTransforms(
+            touchDataRef.current.startPan.x,
+            touchDataRef.current.startPan.y,
+            touchDataRef.current.startZoom
+          );
+        });
+      }
     } else if (e.touches.length === 1) {
       const t = e.touches[0];
       const startT = touchDataRef.current.startTouches[0];
@@ -548,35 +784,84 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       if (touchDataRef.current.mode === 'pan') {
         const deltaX = t.clientX - startT.x;
         const deltaY = t.clientY - startT.y;
-        setPan({
-          x: touchDataRef.current.startPan.x + deltaX,
-          y: touchDataRef.current.startPan.y + deltaY
-        });
+        const nextPanX = touchDataRef.current.startPan.x + deltaX;
+        const nextPanY = touchDataRef.current.startPan.y + deltaY;
+        interactionRef.current.transientPan = { x: nextPanX, y: nextPanY };
+
+        if (!interactionRef.current.rafId) {
+          interactionRef.current.rafId = requestAnimationFrame(() => {
+            interactionRef.current.rafId = null;
+            applyTransientPanTransforms(nextPanX, nextPanY, zoomRef.current);
+          });
+        }
       } else if (touchDataRef.current.mode === 'node' && touchDataRef.current.draggedNodeId && !readOnly) {
-        const deltaX = (t.clientX - startT.x) / zoom;
-        const deltaY = (t.clientY - startT.y) / zoom;
+        const deltaX = (t.clientX - startT.x) / zoomRef.current;
+        const deltaY = (t.clientY - startT.y) / zoomRef.current;
 
-        const updatedNodes = currentMap.nodes.map((n) => {
-          const initial = touchDataRef.current.initialNodePositions.get(n.id);
-          if (initial) {
-            return {
-              ...n,
-              x: snap(Math.round(initial.x + deltaX)),
-              y: snap(Math.round(initial.y + deltaY))
-            };
-          }
-          return n;
-        });
+        interactionRef.current.transientDelta = { x: deltaX, y: deltaY };
 
-        onUpdateMap({ ...currentMap, nodes: updatedNodes, panX: pan.x, panY: pan.y });
+        if (!interactionRef.current.rafId) {
+          interactionRef.current.rafId = requestAnimationFrame(() => {
+            interactionRef.current.rafId = null;
+            applyTransientNodeTransforms(
+              interactionRef.current.transientDelta.x,
+              interactionRef.current.transientDelta.y,
+              touchDataRef.current.initialNodePositions
+            );
+          });
+        }
       }
     }
   };
 
   const handleCanvasTouchEnd = () => {
-    if (touchDataRef.current.mode === 'node' && touchDataRef.current.draggedNodeId) {
-      pushToHistory(currentMap.nodes, currentMap.edges);
+    if (interactionRef.current.rafId) {
+      cancelAnimationFrame(interactionRef.current.rafId);
+      interactionRef.current.rafId = null;
     }
+
+    if (touchDataRef.current.mode === 'pinch') {
+      setZoom(touchDataRef.current.startZoom);
+      setPan(touchDataRef.current.startPan);
+      clearTransientPanTransforms();
+    } else if (touchDataRef.current.mode === 'pan') {
+      if (interactionRef.current.transientPan) {
+        setPan(interactionRef.current.transientPan);
+      }
+      clearTransientPanTransforms();
+    } else if (touchDataRef.current.mode === 'node' && touchDataRef.current.draggedNodeId) {
+      const { transientDelta } = interactionRef.current;
+      const initialNodePositions = touchDataRef.current.initialNodePositions;
+
+      if (Math.abs(transientDelta.x) > 2 || Math.abs(transientDelta.y) > 2) {
+        const updatedNodes = currentMapRef.current.nodes.map((n) => {
+          const initial = initialNodePositions.get(n.id);
+          if (initial) {
+            return {
+              ...n,
+              x: snap(Math.round(initial.x + transientDelta.x)),
+              y: snap(Math.round(initial.y + transientDelta.y))
+            };
+          }
+          return n;
+        });
+
+        clearTransientNodeTransforms(initialNodePositions.keys());
+
+        onUpdateMap({
+          ...currentMapRef.current,
+          nodes: updatedNodes,
+          panX: panRef.current.x,
+          panY: panRef.current.y,
+          updatedAt: Date.now()
+        });
+
+        pushToHistory(updatedNodes, currentMapRef.current.edges);
+      } else {
+        clearTransientNodeTransforms(initialNodePositions.keys());
+      }
+    }
+
     touchDataRef.current = {
       active: false,
       mode: 'none',
@@ -588,6 +873,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       draggedNodeId: null,
       initialNodePositions: new Map()
     };
+    interactionRef.current.mode = 'idle';
   };
 
   // Connection Workflow
@@ -1096,7 +1382,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       onTouchEnd={handleCanvasTouchEnd}
       onTouchCancel={handleCanvasTouchEnd}
       className={`relative w-full h-[calc(100vh-4rem)] bg-stone-100/95 overflow-hidden select-none touch-none ${getCanvasBackgroundClass()} ${
-        canvasMode === 'pan' || isSpacePressed || isPanning ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+        canvasMode === 'pan' || isSpacePressed ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
       }`}
       style={{
         backgroundPosition: `${pan.x}px ${pan.y}px`,
@@ -1320,7 +1606,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
         id="canvas-svg-layer"
         className="absolute inset-0 w-full h-full pointer-events-none z-30 overflow-visible"
       >
-        <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+        <g id="canvas-svg-content" transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
           {currentMap.edges.map((edge) => {
             const sNode = currentMap.nodes.find((n) => n.id === edge.sourceId);
             const tNode = currentMap.nodes.find((n) => n.id === edge.targetId);
@@ -1347,7 +1633,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
             );
           })}
 
-          {/* Active Live Wire when pulling connection */}
+          {/* Active Live Wire when pulling connection (Updated directly in DOM during cursor drag) */}
           {connectingSource && (() => {
             const srcNode = currentMap.nodes.find((n) => n.id === connectingSource.nodeId);
             if (!srcNode) return null;
@@ -1364,21 +1650,25 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
               sX = anchor.x;
               sY = anchor.y;
             }
+            const curX = mouseCanvasPosRef.current.x || sX;
+            const curY = mouseCanvasPosRef.current.y || sY;
             return (
-              <g>
+              <g id="live-wire-group">
                 <line
+                  id="live-wire-underlay"
                   x1={sX}
                   y1={sY}
-                  x2={mouseCanvasPos.x}
-                  y2={mouseCanvasPos.y}
+                  x2={curX}
+                  y2={curY}
                   stroke="rgba(255, 255, 255, 0.95)"
                   strokeWidth={5}
                 />
                 <line
+                  id="live-wire-stroke"
                   x1={sX}
                   y1={sY}
-                  x2={mouseCanvasPos.x}
-                  y2={mouseCanvasPos.y}
+                  x2={curX}
+                  y2={curY}
                   stroke={isWord ? '#e11d48' : '#10b981'}
                   strokeWidth={2.5}
                   strokeDasharray="6 4"
@@ -1387,12 +1677,12 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
                   <>
                     <circle cx={sX} cy={sY} r={10} fill="#e11d48" fillOpacity={0.25} className="animate-ping" />
                     <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#e11d48" strokeWidth={2} />
-                    <circle cx={mouseCanvasPos.x} cy={mouseCanvasPos.y} r={7} fill="#e11d48" stroke="#ffffff" strokeWidth={1.5} />
+                    <circle id="live-wire-head" cx={curX} cy={curY} r={7} fill="#e11d48" stroke="#ffffff" strokeWidth={1.5} />
                   </>
                 ) : (
                   <>
                     <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#10b981" strokeWidth={2} />
-                    <circle cx={mouseCanvasPos.x} cy={mouseCanvasPos.y} r={7} fill="#10b981" stroke="#ffffff" strokeWidth={1.5} />
+                    <circle id="live-wire-head" cx={curX} cy={curY} r={7} fill="#10b981" stroke="#ffffff" strokeWidth={1.5} />
                   </>
                 )}
               </g>
@@ -1403,6 +1693,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 
       {/* Nodes Container (GPU Accelerated, Infinite World Matrix) */}
       <div
+        id="canvas-nodes-container"
         className="absolute inset-0 pointer-events-none z-20"
         style={{
           transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,

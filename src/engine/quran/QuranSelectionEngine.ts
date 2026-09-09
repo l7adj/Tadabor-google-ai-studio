@@ -213,6 +213,7 @@ export class QuranSelectionEngine {
 
   /**
    * Toggles an item in the multi-selection set (Shift+Click / Multi-mode)
+   * Synchronizes activeSelection state to prevent state inconsistency
    */
   public toggleMultiSelection(selection: QuranSelection): void {
     if (this.multiSelections.has(selection.id)) {
@@ -223,14 +224,29 @@ export class QuranSelectionEngine {
         this.multiSelections.set(selection.id, selection);
       }
     }
+
+    const items = Array.from(this.multiSelections.values());
+    if (items.length === 0) {
+      if (this.activeSelection?.type === 'multi' || this.activeSelection?.id === selection.id) {
+        this.activeSelection = null;
+      }
+    } else if (items.length === 1) {
+      this.activeSelection = items[0];
+    } else {
+      this.activeSelection = createMultiSelection(items);
+    }
+
     this.notify();
   }
 
   /**
-   * Clears multi-selection set
+   * Clears multi-selection set and resets active composite selection
    */
   public clearMultiSelection(): void {
     this.multiSelections.clear();
+    if (this.activeSelection?.type === 'multi') {
+      this.activeSelection = null;
+    }
     this.notify();
   }
 
