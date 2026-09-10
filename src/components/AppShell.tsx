@@ -5,7 +5,7 @@ import { QuranSearchPanel } from './Search/QuranSearchPanel';
 import { PresentationView } from './Presentation/PresentationView';
 import { MindMapTemplatesModal } from './Canvas/MindMapTemplatesModal';
 import { QuickAyahPickerModal } from './Search/QuickAyahPickerModal';
-import { TadabburMap, SearchResultItem, QuranAnchor } from '../types';
+import { TadabburMap, SearchResultItem, QuranAnchor, CreateReflectionPayload } from '../types';
 import { MindMapTemplate } from '../lib/mindMapTemplates';
 import { CheckCircle2 } from 'lucide-react';
 
@@ -26,15 +26,7 @@ export interface AppShellProps {
   onImportMap: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onApplyTemplate: (template: MindMapTemplate, asNewMap: boolean) => void;
   onAddAyahToCanvas: (item: SearchResultItem, anchor?: QuranAnchor) => void;
-  onAddReflectionToCanvas?: (
-    item: SearchResultItem,
-    reflectionData: {
-      observation: string;
-      question: string;
-      insight: string;
-      action?: string;
-    }
-  ) => void;
+  onAddReflectionToCanvas?: (payload: CreateReflectionPayload) => void;
   onSelectQuickAyahs: (items: SearchResultItem[], anchor?: QuranAnchor) => void;
   isSearchModalOpen: boolean;
   setIsSearchModalOpen: (open: boolean) => void;

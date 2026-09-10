@@ -48,7 +48,7 @@ import { ReflectionNodeCard } from './Nodes/ReflectionNodeCard';
 import { ImageNodeCard } from './Nodes/ImageNodeCard';
 import { ConceptNodeCard } from './Nodes/ConceptNodeCard';
 import { GroupNodeCard } from './Nodes/GroupNodeCard';
-import { EdgeRenderer, getPreciseNodeAnchor, calculateEdgeGeometry } from './EdgeRenderer';
+import { EdgeRenderer, getPreciseNodeAnchor, calculateEdgeGeometry, computePureEdgePath } from './EdgeRenderer';
 import { CanvasMiniMap } from './CanvasMiniMap';
 import { calculateMindMapLayout } from '../../lib/mindMapLayout';
 import { RelationConfigModal, PendingConnectionData } from './RelationConfigModal';
@@ -324,7 +324,103 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
   useEffect(() => {
     viewportRef.current = { panX: pan.x, panY: pan.y, zoom };
   }, [pan.x, pan.y, zoom]);
+
+  // Synchronize canonical viewport when currentMap changes (switching maps or loading templates)
+  useEffect(() => {
+    const nextPan = { x: currentMap.panX ?? 80, y: currentMap.panY ?? 60 };
+    setPan(nextPan);
+    panRef.current = nextPan;
+    const nextZoom = currentMap.zoom ?? 1;
+    if (nextZoom !== zoom) {
+      setZoom(nextZoom);
+      zoomRef.current = nextZoom;
+    }
+    viewportRef.current = { panX: nextPan.x, panY: nextPan.y, zoom: nextZoom };
+  }, [currentMap.id]);
+
   const wheelTimeoutRef = useRef<number | null>(null);
+
+  // =========================================================================
+  // CACHED GEOMETRY & ELEMENT REFERENCES FOR 120FPS DRAG PIPELINE (ZERO DOM QUERIES)
+  // =========================================================================
+  interface DragEdgeSnapshot {
+    edge: CanvasEdge;
+    isSourceMoving: boolean;
+    isTargetMoving: boolean;
+    baseSX: number;
+    baseSY: number;
+    baseTX: number;
+    baseTY: number;
+    sHandle?: HandlePosition;
+    tHandle?: HandlePosition;
+    curveType: string;
+    isWordSource: boolean;
+    isWordTarget: boolean;
+    isSameNode: boolean;
+    pathEls: SVGElement[];
+    sPinEls: SVGElement[];
+    tPinEls: SVGElement[];
+    foreignEl: Element | null;
+  }
+
+  const dragEdgeSnapshotsRef = useRef<DragEdgeSnapshot[]>([]);
+  const draggedCardElsRef = useRef<Map<string, HTMLElement>>(new Map());
+
+  const initDragGeometrySnapshots = (initialPositions: Map<string, { x: number; y: number }>) => {
+    // 1. Pre-cache dragged card DOM elements
+    const cardEls = new Map<string, HTMLElement>();
+    initialPositions.forEach((_, nodeId) => {
+      const el = document.getElementById(`node-card-${nodeId}`);
+      if (el) cardEls.set(nodeId, el);
+    });
+    draggedCardElsRef.current = cardEls;
+
+    // 2. Pre-index and query affected edges ONCE at drag start
+    const nodeMap = new Map<string, CanvasNode>();
+    for (const n of currentMapRef.current.nodes) {
+      nodeMap.set(n.id, n);
+    }
+
+    const snapshots: DragEdgeSnapshot[] = [];
+    for (const edge of currentMapRef.current.edges) {
+      const isSourceMoving = initialPositions.has(edge.sourceId);
+      const isTargetMoving = initialPositions.has(edge.targetId);
+      if (!isSourceMoving && !isTargetMoving) continue;
+
+      const sNode = nodeMap.get(edge.sourceId);
+      const tNode = nodeMap.get(edge.targetId);
+      if (!sNode || !tNode) continue;
+
+      const geom = calculateEdgeGeometry(edge, sNode, tNode);
+      const isSameNode = sNode.id === tNode.id;
+
+      snapshots.push({
+        edge,
+        isSourceMoving,
+        isTargetMoving,
+        baseSX: geom.sX,
+        baseSY: geom.sY,
+        baseTX: geom.tX,
+        baseTY: geom.tY,
+        sHandle: edge.sourceHandle,
+        tHandle: edge.targetHandle,
+        curveType: edge.curveType || (isSameNode ? 'arc' : 'bezier'),
+        isWordSource: geom.sCoord.isWordAnchor,
+        isWordTarget: geom.tCoord.isWordAnchor,
+        isSameNode,
+        pathEls: Array.from(document.querySelectorAll(`[data-edge-path="${edge.id}"]`)) as SVGElement[],
+        sPinEls: Array.from(document.querySelectorAll(`[data-edge-pin-s="${edge.id}"]`)) as SVGElement[],
+        tPinEls: Array.from(document.querySelectorAll(`[data-edge-pin-t="${edge.id}"]`)) as SVGElement[],
+        foreignEl: document.getElementById(`edge-foreign-${edge.id}`)
+      });
+    }
+    dragEdgeSnapshotsRef.current = snapshots;
+  };
+
+  const cleanupDragGeometrySnapshots = () => {
+    dragEdgeSnapshotsRef.current = [];
+    draggedCardElsRef.current.clear();
+  };
 
   // =========================================================================
   // LAYER 3: TRANSIENT VISUAL TRANSFORM PIPELINE (GPU ACCELERATED & RAF BATCHED)
@@ -335,62 +431,54 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     deltaY: number,
     initialPositions: Map<string, { x: number; y: number }>
   ) => {
-    // 1. Move card DOM elements
-    initialPositions.forEach((initial, nodeId) => {
-      const cardEl = document.getElementById(`node-card-${nodeId}`);
-      if (cardEl) {
+    // 1. Move card DOM elements via cached references (ZERO DOM lookups)
+    draggedCardElsRef.current.forEach((cardEl, nodeId) => {
+      const initial = initialPositions.get(nodeId);
+      if (initial) {
         const curX = snap(Math.round(initial.x + deltaX));
         const curY = snap(Math.round(initial.y + deltaY));
         cardEl.style.transform = `translate3d(${curX}px, ${curY}px, 0)`;
       }
     });
 
-    // 2. Update connected edges directly in SVG DOM
-    currentMapRef.current.edges.forEach((edge) => {
-      const isSourceMoving = initialPositions.has(edge.sourceId);
-      const isTargetMoving = initialPositions.has(edge.targetId);
-      if (!isSourceMoving && !isTargetMoving) return;
+    // 2. Update connected edges directly from cached snapshots (ZERO DOM queries, ZERO layout thrashing)
+    const snapshots = dragEdgeSnapshotsRef.current;
+    for (let i = 0; i < snapshots.length; i++) {
+      const s = snapshots[i];
+      const curSX = s.isSourceMoving ? snap(Math.round(s.baseSX + deltaX)) : s.baseSX;
+      const curSY = s.isSourceMoving ? snap(Math.round(s.baseSY + deltaY)) : s.baseSY;
+      const curTX = s.isTargetMoving ? snap(Math.round(s.baseTX + deltaX)) : s.baseTX;
+      const curTY = s.isTargetMoving ? snap(Math.round(s.baseTY + deltaY)) : s.baseTY;
 
-      const sourceNode = currentMapRef.current.nodes.find((n) => n.id === edge.sourceId);
-      const targetNode = currentMapRef.current.nodes.find((n) => n.id === edge.targetId);
-      if (!sourceNode || !targetNode) return;
+      const { pathData, midX, midY } = computePureEdgePath(
+        curSX,
+        curSY,
+        curTX,
+        curTY,
+        s.curveType,
+        s.isSameNode,
+        s.sHandle,
+        s.tHandle,
+        s.isWordSource,
+        s.isWordTarget
+      );
 
-      const sInit = initialPositions.get(edge.sourceId);
-      const tInit = initialPositions.get(edge.targetId);
-
-      const virtualSource: CanvasNode = sInit
-        ? { ...sourceNode, x: snap(Math.round(sInit.x + deltaX)), y: snap(Math.round(sInit.y + deltaY)) }
-        : sourceNode;
-
-      const virtualTarget: CanvasNode = tInit
-        ? { ...targetNode, x: snap(Math.round(tInit.x + deltaX)), y: snap(Math.round(tInit.y + deltaY)) }
-        : targetNode;
-
-      const geom = calculateEdgeGeometry(edge, virtualSource, virtualTarget);
-
-      // Update path d attributes
-      const paths = document.querySelectorAll(`[data-edge-path="${edge.id}"]`);
-      paths.forEach((p) => p.setAttribute('d', geom.pathData));
-
-      // Update pin coordinates
-      const sPins = document.querySelectorAll(`[data-edge-pin-s="${edge.id}"]`);
-      sPins.forEach((p) => {
-        p.setAttribute('cx', String(geom.sX));
-        p.setAttribute('cy', String(geom.sY));
-      });
-      const tPins = document.querySelectorAll(`[data-edge-pin-t="${edge.id}"]`);
-      tPins.forEach((p) => {
-        p.setAttribute('cx', String(geom.tX));
-        p.setAttribute('cy', String(geom.tY));
-      });
-
-      // Update midpoint foreignObject position
-      const fo = document.getElementById(`edge-foreign-${edge.id}`);
-      if (fo) {
-        fo.setAttribute('x', String(geom.midX - 140));
-        fo.setAttribute('y', String(geom.midY - 26));
+      for (let j = 0; j < s.pathEls.length; j++) {
+        s.pathEls[j].setAttribute('d', pathData);
       }
-    });
+      for (let j = 0; j < s.sPinEls.length; j++) {
+        s.sPinEls[j].setAttribute('cx', String(curSX));
+        s.sPinEls[j].setAttribute('cy', String(curSY));
+      }
+      for (let j = 0; j < s.tPinEls.length; j++) {
+        s.tPinEls[j].setAttribute('cx', String(curTX));
+        s.tPinEls[j].setAttribute('cy', String(curTY));
+      }
+      if (s.foreignEl) {
+        s.foreignEl.setAttribute('x', String(midX - 140));
+        s.foreignEl.setAttribute('y', String(midY - 26));
+      }
+    }
   };
 
   const clearTransientNodeTransforms = (nodeIds: Iterable<string>) => {
@@ -549,6 +637,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       hasMoved: false,
       rafId: null
     };
+    initDragGeometrySnapshots(initialPositions);
   };
 
   // Global Mouse Move (RAF-batched transient visual updates, 0 React re-renders)
@@ -701,6 +790,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       }
 
       interactionRef.current.mode = 'idle';
+      cleanupDragGeometrySnapshots();
       return;
     }
   };
@@ -809,6 +899,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       draggedNodeId: node.id,
       initialNodePositions: initialPositions
     };
+    initDragGeometrySnapshots(initialPositions);
   };
 
   const handleCanvasTouchMove = (e: React.TouchEvent) => {
@@ -951,6 +1042,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       draggedNodeId: null,
       initialNodePositions: new Map()
     };
+    cleanupDragGeometrySnapshots();
     interactionRef.current.mode = 'idle';
   };
 
@@ -1390,8 +1482,53 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     const newPanX = viewportDims.width / 2 - centerX * targetZoom;
     const newPanY = viewportDims.height / 2 - centerY * targetZoom;
 
+    const finalPanX = Math.round(newPanX);
+    const finalPanY = Math.round(newPanY);
+    viewportRef.current = { panX: finalPanX, panY: finalPanY, zoom: targetZoom };
     setZoom(targetZoom);
-    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
+    setPan({ x: finalPanX, y: finalPanY });
+    applyTransientPanTransforms(finalPanX, finalPanY, targetZoom);
+    onUpdateMap({
+      ...currentMapRef.current,
+      panX: finalPanX,
+      panY: finalPanY,
+      zoom: targetZoom,
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleZoomChange = (delta: number) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const centerPoint: Point = { x: rect.width / 2, y: rect.height / 2 };
+    const targetZoom = Math.min(Math.max(Number((zoomRef.current + delta).toFixed(2)), MIN_ZOOM), MAX_ZOOM);
+    const nextVp = zoomAtPoint(centerPoint, targetZoom, viewportRef.current);
+    viewportRef.current = nextVp;
+    setZoom(nextVp.zoom);
+    setPan({ x: nextVp.panX, y: nextVp.panY });
+    applyTransientPanTransforms(nextVp.panX, nextVp.panY, nextVp.zoom);
+    onUpdateMap({
+      ...currentMapRef.current,
+      panX: nextVp.panX,
+      panY: nextVp.panY,
+      zoom: nextVp.zoom,
+      updatedAt: Date.now()
+    });
+  };
+
+  const handleResetViewport = () => {
+    const nextVp: Viewport = { panX: 80, panY: 60, zoom: 1 };
+    viewportRef.current = nextVp;
+    setZoom(1);
+    setPan({ x: 80, y: 60 });
+    applyTransientPanTransforms(80, 60, 1);
+    onUpdateMap({
+      ...currentMapRef.current,
+      panX: 80,
+      panY: 60,
+      zoom: 1,
+      updatedAt: Date.now()
+    });
   };
 
   // Alignment Tools
@@ -1451,6 +1588,35 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
   return (
     <div
       ref={containerRef}
+      onPointerDown={(e) => {
+        if (
+          canvasMode === 'pan' ||
+          isSpacePressed ||
+          e.button === 1 ||
+          e.target === containerRef.current ||
+          (e.target as HTMLElement).id === 'canvas-svg-layer' ||
+          (e.target as HTMLElement).id === 'canvas-world'
+        ) {
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {}
+        }
+      }}
+      onPointerUp={(e) => {
+        try {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        } catch {}
+      }}
+      onPointerCancel={(e) => {
+        try {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        } catch {}
+        handleMouseUp();
+      }}
       onMouseDown={handleCanvasMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -2004,7 +2170,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 
               {/* Zoom Out */}
               <button
-                onClick={() => setZoom(Math.max(Number((zoom - 0.15).toFixed(2)), 0.15))}
+                onClick={() => handleZoomChange(-0.15)}
                 className="p-2 text-stone-600 hover:text-stone-950 hover:bg-stone-100 rounded-xl transition-colors"
                 title="تصغير (-)"
               >
@@ -2013,10 +2179,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 
               {/* Reset Zoom & Pan to Origin */}
               <button
-                onClick={() => {
-                  setZoom(1);
-                  setPan({ x: 80, y: 60 });
-                }}
+                onClick={handleResetViewport}
                 className="text-[11px] font-mono font-bold text-stone-700 hover:bg-stone-100 px-2 py-1 rounded-lg transition-colors"
                 title="إعادة ضبط المقياس إلى 100%"
               >
@@ -2025,7 +2188,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 
               {/* Zoom In */}
               <button
-                onClick={() => setZoom(Math.min(Number((zoom + 0.15).toFixed(2)), 3.0))}
+                onClick={() => handleZoomChange(0.15)}
                 className="p-2 text-stone-600 hover:text-stone-950 hover:bg-stone-100 rounded-xl transition-colors"
                 title="تكبير (+)"
               >

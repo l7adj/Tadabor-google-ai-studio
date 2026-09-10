@@ -1,5 +1,13 @@
 import { useCallback } from 'react';
-import { TadabburMap, CanvasNode, CanvasEdge, SearchResultItem, QuranAnchor, WordAnnotation } from '../../types';
+import {
+  TadabburMap,
+  CanvasNode,
+  CanvasEdge,
+  SearchResultItem,
+  QuranAnchor,
+  WordAnnotation,
+  CreateReflectionPayload
+} from '../../types';
 import { cleanSurahName } from '../../lib/arabicUtils';
 
 export interface UseSearchCanvasIntegrationProps {
@@ -89,21 +97,13 @@ export function useSearchCanvasIntegration({
   );
 
   const addReflectionToCanvas = useCallback(
-    (
-      item: SearchResultItem,
-      reflectionData: {
-        observation: string;
-        question: string;
-        insight: string;
-        action?: string;
-      }
-    ) => {
+    (payload: CreateReflectionPayload) => {
       // Find or create ayah node
       const existingAyah = currentMap.nodes.find(
         (n) =>
           n.type === 'ayah' &&
-          n.ayahData?.surahNumber === item.surahNumber &&
-          n.ayahData?.ayahNumberInSurah === item.ayahNumberInSurah
+          n.ayahData?.surahNumber === payload.surahNumber &&
+          n.ayahData?.ayahNumberInSurah === payload.ayahNumberInSurah
       );
 
       let ayahNode = existingAyah;
@@ -123,27 +123,37 @@ export function useSearchCanvasIntegration({
         }
 
         ayahNode = {
-          id: `ayah-${item.overallAyahNumber}-${Date.now()}`,
+          id: `ayah-${payload.surahNumber}-${payload.ayahNumberInSurah}-${Date.now()}`,
           type: 'ayah',
           x: newX,
           y: newY,
           width: 380,
-          colorTheme: item.revelationType === 'Meccan' ? 'emerald' : 'amber',
+          colorTheme: 'emerald',
           ayahData: {
-            surahNumber: item.surahNumber,
-            surahName: cleanSurahName(item.surahName),
-            ayahNumberInSurah: item.ayahNumberInSurah,
-            overallAyahNumber: item.overallAyahNumber,
-            page: item.page,
-            juz: item.juz,
-            revelationType: item.revelationType,
-            textUthmani: item.textUthmani,
-            textSimple: item.textSimple,
+            surahNumber: payload.surahNumber,
+            surahName: cleanSurahName(payload.surahName),
+            ayahNumberInSurah: payload.ayahNumberInSurah,
+            overallAyahNumber: 0,
+            juz: 1,
+            revelationType: 'Meccan',
+            textUthmani: payload.textUthmani,
+            textSimple: payload.textSimple || payload.textUthmani,
             annotations: []
           }
         };
         newNodes.push(ayahNode);
       }
+
+      const isWordLevel = payload.wordIndex !== undefined;
+      const anchor: QuranAnchor = {
+        surah: payload.surahNumber,
+        ayah: payload.ayahNumberInSurah,
+        level: isWordLevel ? 'word' : 'ayah',
+        wordIndex: payload.wordIndex,
+        text: payload.selectedText || payload.textUthmani,
+        surahName: cleanSurahName(payload.surahName),
+        ayahNumberInSurah: payload.ayahNumberInSurah
+      };
 
       // Create reflection card placed next to the ayah
       const reflectionNode: CanvasNode = {
@@ -154,20 +164,13 @@ export function useSearchCanvasIntegration({
         width: 380,
         colorTheme: 'emerald',
         reflectionData: {
-          surahName: cleanSurahName(item.surahName),
-          ayahNumberInSurah: item.ayahNumberInSurah,
-          observation: reflectionData.observation,
-          question: reflectionData.question,
-          insight: reflectionData.insight,
-          anchor: {
-            surah: item.surahNumber,
-            ayah: item.ayahNumberInSurah,
-            level: 'ayah',
-            text: item.textUthmani || item.textSimple,
-            surahName: cleanSurahName(item.surahName),
-            ayahNumberInSurah: item.ayahNumberInSurah
-          },
-          selectedText: item.textUthmani || item.textSimple
+          surahName: cleanSurahName(payload.surahName),
+          ayahNumberInSurah: payload.ayahNumberInSurah,
+          observation: payload.observation,
+          question: payload.question,
+          insight: payload.insight,
+          anchor,
+          selectedText: payload.selectedText || payload.textUthmani
         }
       };
       newNodes.push(reflectionNode);
@@ -181,6 +184,8 @@ export function useSearchCanvasIntegration({
         targetHandle: 'right' as const,
         relationshipKind: 'tadabbur' as const,
         label: 'وقفة تدبرية',
+        sourceWordIndex: payload.wordIndex,
+        sourceAnchor: anchor,
         style: 'solid' as const,
         curveType: 'bezier' as const,
         arrowType: 'end' as const,
@@ -195,7 +200,7 @@ export function useSearchCanvasIntegration({
       };
 
       onUpdateMap(updatedMap);
-      onNotify?.(`تمت إضافة وقفة تدبرية وربطها بسورة ${cleanSurahName(item.surahName)} [آية ${item.ayahNumberInSurah}]`);
+      onNotify?.(`تمت إضافة وقفة تدبرية وربطها بسورة ${cleanSurahName(payload.surahName)} [آية ${payload.ayahNumberInSurah}]`);
     },
     [currentMap, onUpdateMap, onNotify]
   );

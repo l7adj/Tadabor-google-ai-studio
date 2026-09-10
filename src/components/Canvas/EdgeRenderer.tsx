@@ -198,6 +198,87 @@ function getAutoHandles(
   }
 }
 
+export interface PureEdgePathResult {
+  pathData: string;
+  midX: number;
+  midY: number;
+}
+
+/**
+ * Pure mathematical path generator for edges.
+ * Zero DOM access, zero layout thrashing, usable in 120fps hot loops.
+ */
+export function computePureEdgePath(
+  sX: number,
+  sY: number,
+  tX: number,
+  tY: number,
+  curveType: string,
+  isSameNode: boolean,
+  sHandle?: HandlePosition,
+  tHandle?: HandlePosition,
+  isWordSource?: boolean,
+  isWordTarget?: boolean
+): PureEdgePathResult {
+  const dx = tX - sX;
+  const dy = tY - sY;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+
+  let pathData = '';
+  let midX = (sX + tX) / 2;
+  let midY = (sY + tY) / 2;
+
+  if (isSameNode) {
+    const arcHeight = Math.min(Math.max(Math.abs(dx) * 0.45, 28), 85);
+    const apexY = Math.min(sY, tY) - arcHeight;
+    pathData = `M ${sX} ${sY} C ${sX} ${apexY}, ${tX} ${apexY}, ${tX} ${tY}`;
+    midX = (sX + tX) / 2;
+    midY = apexY + 12;
+  } else if (curveType === 'straight') {
+    pathData = `M ${sX} ${sY} L ${tX} ${tY}`;
+    midX = (sX + tX) / 2;
+    midY = (sY + tY) / 2;
+  } else if (curveType === 'orthogonal') {
+    const midStepX = sX + dx * 0.5;
+    pathData = `M ${sX} ${sY} L ${midStepX} ${sY} L ${midStepX} ${tY} L ${tX} ${tY}`;
+    midX = midStepX;
+    midY = (sY + tY) / 2;
+  } else {
+    let cx1 = sX;
+    let cy1 = sY;
+    let cx2 = tX;
+    let cy2 = tY;
+
+    const curvatureOffset = Math.min(Math.max(distance * 0.35, 40), 160);
+
+    if (isWordSource) {
+      if (tY < sY) cy1 -= curvatureOffset * 0.7;
+      else cy1 += curvatureOffset * 0.7;
+    } else {
+      if (sHandle === 'left') cx1 -= curvatureOffset;
+      else if (sHandle === 'right') cx1 += curvatureOffset;
+      else if (sHandle === 'top') cy1 -= curvatureOffset;
+      else if (sHandle === 'bottom') cy1 += curvatureOffset;
+    }
+
+    if (isWordTarget) {
+      if (sY < tY) cy2 -= curvatureOffset * 0.7;
+      else cy2 += curvatureOffset * 0.7;
+    } else {
+      if (tHandle === 'left') cx2 -= curvatureOffset;
+      else if (tHandle === 'right') cx2 += curvatureOffset;
+      else if (tHandle === 'top') cy2 -= curvatureOffset;
+      else if (tHandle === 'bottom') cy2 += curvatureOffset;
+    }
+
+    pathData = `M ${sX} ${sY} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${tX} ${tY}`;
+    midX = 0.125 * sX + 0.375 * cx1 + 0.375 * cx2 + 0.125 * tX;
+    midY = 0.125 * sY + 0.375 * cy1 + 0.375 * cy2 + 0.125 * tY;
+  }
+
+  return { pathData, midX, midY };
+}
+
 // Pure function to calculate edge coordinates, path data, and midpoint without React rendering
 export function calculateEdgeGeometry(
   edge: CanvasEdge,
@@ -239,64 +320,19 @@ export function calculateEdgeGeometry(
   const dy = tY - sY;
   const distance = Math.sqrt(dx * dx + dy * dy);
 
-  // Compute Path based on curveType or intra-ayah arc
   const curveType = edge.curveType || (isSameNode ? 'arc' : 'bezier');
-  let pathData = '';
-  let midX = (sX + tX) / 2;
-  let midY = (sY + tY) / 2;
-
-  if (isSameNode) {
-    // Elegant rhetorical arch above the words in the SAME ayah!
-    const arcHeight = Math.min(Math.max(Math.abs(dx) * 0.45, 28), 85);
-    const apexY = Math.min(sY, tY) - arcHeight;
-    pathData = `M ${sX} ${sY} C ${sX} ${apexY}, ${tX} ${apexY}, ${tX} ${tY}`;
-    midX = (sX + tX) / 2;
-    midY = apexY + 12;
-  } else if (curveType === 'straight') {
-    pathData = `M ${sX} ${sY} L ${tX} ${tY}`;
-    midX = (sX + tX) / 2;
-    midY = (sY + tY) / 2;
-  } else if (curveType === 'orthogonal') {
-    // Stepped right angles
-    const midStepX = sX + dx * 0.5;
-    pathData = `M ${sX} ${sY} L ${midStepX} ${sY} L ${midStepX} ${tY} L ${tX} ${tY}`;
-    midX = midStepX;
-    midY = (sY + tY) / 2;
-  } else {
-    // Smooth Bezier
-    let cx1 = sX;
-    let cy1 = sY;
-    let cx2 = tX;
-    let cy2 = tY;
-
-    const curvatureOffset = Math.min(Math.max(distance * 0.35, 40), 160);
-
-    if (sCoord.isWordAnchor) {
-      if (tY < sY) cy1 -= curvatureOffset * 0.7;
-      else cy1 += curvatureOffset * 0.7;
-    } else {
-      if (sHandle === 'left') cx1 -= curvatureOffset;
-      else if (sHandle === 'right') cx1 += curvatureOffset;
-      else if (sHandle === 'top') cy1 -= curvatureOffset;
-      else if (sHandle === 'bottom') cy1 += curvatureOffset;
-    }
-
-    if (tCoord.isWordAnchor) {
-      if (sY < tY) cy2 -= curvatureOffset * 0.7;
-      else cy2 += curvatureOffset * 0.7;
-    } else {
-      if (tHandle === 'left') cx2 -= curvatureOffset;
-      else if (tHandle === 'right') cx2 += curvatureOffset;
-      else if (tHandle === 'top') cy2 -= curvatureOffset;
-      else if (tHandle === 'bottom') cy2 += curvatureOffset;
-    }
-
-    pathData = `M ${sX} ${sY} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${tX} ${tY}`;
-
-    // Midpoint on Bezier at t=0.5
-    midX = 0.125 * sX + 0.375 * cx1 + 0.375 * cx2 + 0.125 * tX;
-    midY = 0.125 * sY + 0.375 * cy1 + 0.375 * cy2 + 0.125 * tY;
-  }
+  const { pathData, midX, midY } = computePureEdgePath(
+    sX,
+    sY,
+    tX,
+    tY,
+    curveType,
+    isSameNode,
+    sHandle,
+    tHandle,
+    sCoord.isWordAnchor,
+    tCoord.isWordAnchor
+  );
 
   return { pathData, midX, midY, sX, sY, tX, tY, distance, isSameNode, sCoord, tCoord };
 }

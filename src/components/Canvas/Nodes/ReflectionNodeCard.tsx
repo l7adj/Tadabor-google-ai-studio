@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Trash2, Link, Edit3, Sparkles, Palette, CopyPlus, BookOpen, HelpCircle, Lightbulb, Check } from 'lucide-react';
 import { CanvasNode, ReflectionNodeData, HandlePosition } from '../../../types';
 import { cleanSurahName } from '../../../lib/arabicUtils';
@@ -45,6 +45,14 @@ export const ReflectionNodeCard: React.FC<ReflectionNodeCardProps> = React.memo(
   const [question, setQuestion] = useState(data?.question || '');
   const [insight, setInsight] = useState(data?.insight || '');
   const [showColorPicker, setShowColorPicker] = useState(false);
+
+  useEffect(() => {
+    if (!isEditing && data) {
+      setObservation(data.observation || '');
+      setQuestion(data.question || '');
+      setInsight(data.insight || '');
+    }
+  }, [data?.observation, data?.question, data?.insight, isEditing]);
 
   if (!data) return null;
 

@@ -177,8 +177,8 @@ export interface AyahNodeData {
   ayahNumberInSurah: number;
   overallAyahNumber?: number;
   page?: number;
-  juz: number;
-  revelationType: string;
+  juz?: number;
+  revelationType?: string;
   textUthmani: string;
   textSimple: string;
   annotations: WordAnnotation[];
@@ -298,4 +298,18 @@ export interface PresentationSlide {
   subtitle?: string;
   focusType: NodeType;
   customReflection?: string;
+}
+
+export interface CreateReflectionPayload {
+  surahNumber: number;
+  ayahNumberInSurah: number;
+  surahName: string;
+  textUthmani: string;
+  textSimple?: string;
+  wordIndex?: number;
+  selectedText?: string;
+  observation: string;
+  question?: string;
+  insight?: string;
+  action?: string;
 }

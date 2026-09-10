@@ -15,7 +15,7 @@ import {
   Info,
   Palette
 } from 'lucide-react';
-import { SearchMode, SearchResponse, SearchResultItem, SurahData, QuranCorpus } from '../../types';
+import { SearchMode, SearchResponse, SearchResultItem, SurahData, QuranCorpus, CreateReflectionPayload } from '../../types';
 import { searchQuran, loadQuranCorpus } from '../../lib/quranService';
 import { QURAN_ROOTS_DICTIONARY } from '../../lib/quranRoots';
 import { QURAN_SEMANTIC_TOPICS } from '../../lib/quranSemantics';
@@ -25,15 +25,7 @@ import { QuranContextModal } from './QuranContextModal';
 
 interface QuranSearchPanelProps {
   onAddAyahToCanvas: (item: SearchResultItem) => void;
-  onAddReflectionToCanvas?: (reflectionData: {
-    surahNumber: number;
-    ayahNumberInSurah: number;
-    surahName: string;
-    textUthmani: string;
-    observation: string;
-    question?: string;
-    insight?: string;
-  }) => void;
+  onAddReflectionToCanvas?: (payload: CreateReflectionPayload) => void;
   onClose?: () => void;
   isModal?: boolean;
 }
@@ -59,7 +51,12 @@ export const QuranSearchPanel: React.FC<QuranSearchPanelProps> = ({
   const [corpus, setCorpus] = useState<QuranCorpus | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [addedId, setAddedId] = useState<number | null>(null);
-  const [contextModalAyah, setContextModalAyah] = useState<{ surahNumber: number; ayahNumberInSurah: number } | null>(null);
+  const [contextModalAyah, setContextModalAyah] = useState<{
+    surahNumber: number;
+    ayahNumberInSurah: number;
+    initialWordIndex?: number;
+    matchedWordIndices?: number[];
+  } | null>(null);
 
   const [, startTransition] = useTransition();
 
@@ -504,7 +501,17 @@ export const QuranSearchPanel: React.FC<QuranSearchPanelProps> = ({
                     {/* Actions */}
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={() => setContextModalAyah({ surahNumber: item.surahNumber, ayahNumberInSurah: item.ayahNumberInSurah })}
+                        onClick={() =>
+                          setContextModalAyah({
+                            surahNumber: item.surahNumber,
+                            ayahNumberInSurah: item.ayahNumberInSurah,
+                            initialWordIndex:
+                              item.matchedWordIndices && item.matchedWordIndices.length > 0
+                                ? item.matchedWordIndices[0]
+                                : undefined,
+                            matchedWordIndices: item.matchedWordIndices
+                          })
+                        }
                         className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-200 transition-colors cursor-pointer"
                         title="قراءة سياق الآية وكتابة وقفة تدبرية"
                       >
@@ -619,6 +626,8 @@ export const QuranSearchPanel: React.FC<QuranSearchPanelProps> = ({
         <QuranContextModal
           surahNumber={contextModalAyah.surahNumber}
           ayahNumberInSurah={contextModalAyah.ayahNumberInSurah}
+          initialWordIndex={contextModalAyah.initialWordIndex}
+          matchedWordIndices={contextModalAyah.matchedWordIndices}
           onClose={() => setContextModalAyah(null)}
           onAddAyahToCanvas={onAddAyahToCanvas}
           onAddReflectionToCanvas={onAddReflectionToCanvas}

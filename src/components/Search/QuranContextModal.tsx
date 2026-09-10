@@ -12,29 +12,25 @@ import {
   Lightbulb,
   MessageSquare
 } from 'lucide-react';
-import { SurahData, AyahData, SearchResultItem } from '../../types';
+import { SurahData, AyahData, SearchResultItem, CreateReflectionPayload } from '../../types';
 import { getAyahContext, AyahContextData } from '../../lib/quranService';
 import { cleanSurahName } from '../../lib/arabicUtils';
 
 interface QuranContextModalProps {
   surahNumber: number;
   ayahNumberInSurah: number;
+  initialWordIndex?: number;
+  matchedWordIndices?: number[];
   onClose: () => void;
   onAddAyahToCanvas: (item: SearchResultItem) => void;
-  onAddReflectionToCanvas?: (reflectionData: {
-    surahNumber: number;
-    ayahNumberInSurah: number;
-    surahName: string;
-    textUthmani: string;
-    observation: string;
-    question?: string;
-    insight?: string;
-  }) => void;
+  onAddReflectionToCanvas?: (payload: CreateReflectionPayload) => void;
 }
 
 export const QuranContextModal: React.FC<QuranContextModalProps> = ({
   surahNumber,
   ayahNumberInSurah,
+  initialWordIndex,
+  matchedWordIndices = [],
   onClose,
   onAddAyahToCanvas,
   onAddReflectionToCanvas
@@ -45,6 +41,7 @@ export const QuranContextModal: React.FC<QuranContextModalProps> = ({
 
   // Reflection workflow states
   const [activeTab, setActiveTab] = useState<'context' | 'reflect'>('context');
+  const [selectedWordIndex, setSelectedWordIndex] = useState<number | undefined>(initialWordIndex);
   const [observation, setObservation] = useState('');
   const [question, setQuestion] = useState('');
   const [insight, setInsight] = useState('');
@@ -103,13 +100,22 @@ export const QuranContextModal: React.FC<QuranContextModalProps> = ({
     setTimeout(() => setIsAdded(false), 2000);
   };
 
+  const targetWords = targetAyah.textUthmani.split(/\s+/).filter(Boolean);
+
   const handleSaveReflection = () => {
     if (onAddReflectionToCanvas) {
+      const selectedWordText =
+        selectedWordIndex !== undefined && targetWords[selectedWordIndex]
+          ? targetWords[selectedWordIndex]
+          : undefined;
+
       onAddReflectionToCanvas({
         surahNumber: surah.number,
         ayahNumberInSurah: targetAyah.numberInSurah,
         surahName: surah.name,
         textUthmani: targetAyah.textUthmani,
+        wordIndex: selectedWordIndex,
+        selectedText: selectedWordText,
         observation: observation.trim() || 'وقفة تدبرية حول الآية',
         question: question.trim(),
         insight: insight.trim()
@@ -268,8 +274,55 @@ export const QuranContextModal: React.FC<QuranContextModalProps> = ({
           ) : (
             /* Direct Guided Reflection Form */
             <div className="space-y-4 font-tajawal">
-              <div className="bg-white p-4 rounded-2xl border border-emerald-200 text-center font-quran text-lg text-stone-900 leading-relaxed shadow-2xs">
-                ﴿{targetAyah.textUthmani}﴾
+              <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-2xs space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-stone-500 font-cairo">
+                  <span>انقر على أي كلمة لتحديد ارتكاز الوقفة التدبرية (اختياري):</span>
+                  {selectedWordIndex !== undefined && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWordIndex(undefined)}
+                      className="text-stone-400 hover:text-rose-600 text-[10px] underline"
+                    >
+                      إلغاء ارتكاز الكلمة
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-center gap-1.5 font-quran text-lg leading-loose py-1" dir="rtl">
+                  {targetWords.map((word, wIdx) => {
+                    const isSelected = selectedWordIndex === wIdx;
+                    const isMatchedFromSearch = matchedWordIndices.includes(wIdx);
+
+                    return (
+                      <button
+                        key={wIdx}
+                        type="button"
+                        onClick={() => setSelectedWordIndex(isSelected ? undefined : wIdx)}
+                        className={`px-1.5 py-0.5 rounded-lg transition-all cursor-pointer text-stone-900 ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white font-bold shadow-xs scale-105'
+                            : isMatchedFromSearch
+                            ? 'bg-amber-100 text-amber-950 font-bold ring-1 ring-amber-300'
+                            : 'hover:bg-emerald-50 hover:text-emerald-900'
+                        }`}
+                        title={isSelected ? 'تم تحديد ارتكاز الوقفة على هذه الكلمة' : 'انقر لربط الوقفة بهذه الكلمة تحديداً'}
+                      >
+                        {word}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedWordIndex !== undefined && (
+                  <div className="text-[11px] text-emerald-800 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-1.5 font-cairo">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" />
+                    <span>مرتكز الوقفة الحالي:</span>
+                    <span className="font-quran font-bold text-xs text-emerald-950">
+                      «{targetWords[selectedWordIndex]}»
+                    </span>
+                    <span className="text-stone-500 text-[10px]">(سيخرج سهم الرابطة في اللوحة مباشرة من هذه الكلمة)</span>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-3">

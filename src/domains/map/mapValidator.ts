@@ -63,6 +63,7 @@ export function validateImportedMap(rawJson: unknown): ValidationResult {
       zIndex: typeof n.zIndex === 'number' ? n.zIndex : undefined,
       ayahData: (n.ayahData && typeof n.ayahData === 'object' ? n.ayahData : undefined) as CanvasNode['ayahData'],
       noteData: (n.noteData && typeof n.noteData === 'object' ? n.noteData : undefined) as CanvasNode['noteData'],
+      reflectionData: (n.reflectionData && typeof n.reflectionData === 'object' ? n.reflectionData : undefined) as CanvasNode['reflectionData'],
       conceptData: (n.conceptData && typeof n.conceptData === 'object' ? n.conceptData : undefined) as CanvasNode['conceptData'],
       groupData: (n.groupData && typeof n.groupData === 'object' ? n.groupData : undefined) as CanvasNode['groupData'],
       imageData: (n.imageData && typeof n.imageData === 'object' ? n.imageData : undefined) as CanvasNode['imageData'],
@@ -116,6 +117,12 @@ export function validateImportedMap(rawJson: unknown): ValidationResult {
   }
 
   const now = Date.now();
+  const validGridTypes = new Set(['dots', 'lines', 'grid', 'islamic', 'clean']);
+  const gridType = typeof obj.gridType === 'string' && validGridTypes.has(obj.gridType)
+    ? (obj.gridType as TadabburMap['gridType'])
+    : 'dots';
+  const snapToGrid = typeof obj.snapToGrid === 'boolean' ? obj.snapToGrid : false;
+
   const sanitizedMap: TadabburMap = {
     id: typeof obj.id === 'string' && obj.id.trim() ? obj.id.trim() : `map-imported-${now}`,
     title,
@@ -125,6 +132,8 @@ export function validateImportedMap(rawJson: unknown): ValidationResult {
     zoom: typeof obj.zoom === 'number' && !isNaN(obj.zoom) && obj.zoom > 0 ? Math.min(Math.max(obj.zoom, 0.2), 2.5) : 1,
     panX: typeof obj.panX === 'number' && !isNaN(obj.panX) ? obj.panX : 80,
     panY: typeof obj.panY === 'number' && !isNaN(obj.panY) ? obj.panY : 60,
+    gridType,
+    snapToGrid,
     createdAt: typeof obj.createdAt === 'number' ? obj.createdAt : now,
     updatedAt: now
   };
