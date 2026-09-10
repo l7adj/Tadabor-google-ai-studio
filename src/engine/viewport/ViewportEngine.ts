@@ -69,8 +69,8 @@ export function zoomAtPoint(
   const newPanY = cursorScreenPoint.y - worldPoint.y * clampedZoom;
 
   return {
-    panX: Math.round(newPanX * 100) / 100,
-    panY: Math.round(newPanY * 100) / 100,
+    panX: newPanX,
+    panY: newPanY,
     zoom: clampedZoom
   };
 }
@@ -122,8 +122,8 @@ export function calculatePinch(
   const newPanY = currentMidpoint.y - worldMidpoint.y * newZoom;
 
   return {
-    panX: Math.round(newPanX * 100) / 100,
-    panY: Math.round(newPanY * 100) / 100,
+    panX: newPanX,
+    panY: newPanY,
     zoom: newZoom
   };
 }

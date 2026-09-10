@@ -306,10 +306,19 @@ export interface CreateReflectionPayload {
   surahName: string;
   textUthmani: string;
   textSimple?: string;
+  level?: QuranAnchorLevel;
   wordIndex?: number;
+  startWord?: number;
+  endWord?: number;
+  charIndex?: number;
+  startChar?: number;
+  endChar?: number;
   selectedText?: string;
+  anchor?: QuranAnchor;
+  title?: string;
   observation: string;
   question?: string;
   insight?: string;
   action?: string;
+  tags?: string[];
 }

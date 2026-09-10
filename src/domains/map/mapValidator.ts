@@ -1,4 +1,5 @@
 import { TadabburMap, CanvasNode, CanvasEdge, NodeType } from '../../types';
+import { MIN_ZOOM, MAX_ZOOM } from '../../engine/viewport/ViewportEngine';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -105,6 +106,13 @@ export function validateImportedMap(rawJson: unknown): ValidationResult {
         customRelationship: typeof e.customRelationship === 'string' ? e.customRelationship : undefined,
         sourceAnchor: (e.sourceAnchor && typeof e.sourceAnchor === 'object' ? e.sourceAnchor : undefined) as CanvasEdge['sourceAnchor'],
         targetAnchor: (e.targetAnchor && typeof e.targetAnchor === 'object' ? e.targetAnchor : undefined) as CanvasEdge['targetAnchor'],
+        sourceWordIndex: typeof e.sourceWordIndex === 'number' ? e.sourceWordIndex : undefined,
+        targetWordIndex: typeof e.targetWordIndex === 'number' ? e.targetWordIndex : undefined,
+        sourceWordText: typeof e.sourceWordText === 'string' ? e.sourceWordText : undefined,
+        targetWordText: typeof e.targetWordText === 'string' ? e.targetWordText : undefined,
+        sourceHandle: typeof e.sourceHandle === 'string' ? (e.sourceHandle as CanvasEdge['sourceHandle']) : undefined,
+        targetHandle: typeof e.targetHandle === 'string' ? (e.targetHandle as CanvasEdge['targetHandle']) : undefined,
+        category: typeof e.category === 'string' ? e.category : undefined,
         curveType: typeof e.curveType === 'string' ? (e.curveType as CanvasEdge['curveType']) : 'bezier',
         style: typeof e.style === 'string' ? (e.style as CanvasEdge['style']) : 'solid',
         arrowType: typeof e.arrowType === 'string' ? (e.arrowType as CanvasEdge['arrowType']) : 'end',
@@ -129,7 +137,7 @@ export function validateImportedMap(rawJson: unknown): ValidationResult {
     description: typeof obj.description === 'string' ? obj.description : undefined,
     nodes: sanitizedNodes,
     edges: sanitizedEdges,
-    zoom: typeof obj.zoom === 'number' && !isNaN(obj.zoom) && obj.zoom > 0 ? Math.min(Math.max(obj.zoom, 0.2), 2.5) : 1,
+    zoom: typeof obj.zoom === 'number' && !isNaN(obj.zoom) && obj.zoom > 0 ? Math.min(Math.max(obj.zoom, MIN_ZOOM), MAX_ZOOM) : 1,
     panX: typeof obj.panX === 'number' && !isNaN(obj.panX) ? obj.panX : 80,
     panY: typeof obj.panY === 'number' && !isNaN(obj.panY) ? obj.panY : 60,
     gridType,

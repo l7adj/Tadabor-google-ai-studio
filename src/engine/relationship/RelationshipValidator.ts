@@ -49,7 +49,7 @@ export function validateRelationship(rel: QuranRelationship): ValidationResult {
  * Checks if two anchors point to the exact same granularity and position
  */
 export function isIdenticalAnchor(a: QuranAnchorV2, b: QuranAnchorV2): boolean {
-  if (a.id === b.id) return true;
+  if (a.id && b.id && a.id === b.id) return true;
 
   const aSurah = a.surahId ?? a.surah;
   const bSurah = b.surahId ?? b.surah;

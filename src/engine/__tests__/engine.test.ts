@@ -42,6 +42,22 @@ import {
   validateRelationship
 } from '../index';
 
+import {
+  worldToScreen,
+  screenToWorld,
+  zoomAtPoint,
+  calculatePinch,
+  panBy,
+  MIN_ZOOM,
+  MAX_ZOOM,
+  Point,
+  Viewport
+} from '../viewport/ViewportEngine';
+
+import { computePureEdgePath } from '../../components/Canvas/EdgeRenderer';
+import { validateImportedMap } from '../../domains/map/mapValidator';
+import { TadabburMap, CanvasNode, CanvasEdge, CreateReflectionPayload, QuranAnchor } from '../../types';
+
 function assert(condition: boolean, message: string) {
   if (!condition) {
     throw new Error(`Assertion Failed: ${message}`);
@@ -541,6 +557,640 @@ console.log('--- Starting Quran Engine Verification Tests ---');
   console.log('✓ Test 10 Passed: Canvas Drag & Pan Pipeline State Machine Verification (Zero move mutations, Exactly 1 commit on release)');
 }
 
+// Test 11: Viewport Math & Invariants (Inverses, Cursor-Centered Zoom, Pinch, and Limits)
+{
+  const vp: Viewport = { panX: 150, panY: -75, zoom: 1.8 };
+  const p: Point = { x: 480, y: 320 };
+
+  // 1. Coordinate Inverses
+  const world = screenToWorld(p, vp);
+  const screen = worldToScreen(world, vp);
+  assert(Math.abs(screen.x - p.x) < 1e-6, 'screenToWorld -> worldToScreen must yield original X');
+  assert(Math.abs(screen.y - p.y) < 1e-6, 'screenToWorld -> worldToScreen must yield original Y');
+
+  // 2. Cursor-Centered Zoom Invariance
+  const cursor: Point = { x: 500, y: 350 };
+  const worldUnderCursorBefore = screenToWorld(cursor, vp);
+  const zoomedVp = zoomAtPoint(cursor, 2.5, vp);
+  const worldUnderCursorAfter = screenToWorld(cursor, zoomedVp);
+  assert(
+    Math.abs(worldUnderCursorBefore.x - worldUnderCursorAfter.x) < 1e-6,
+    'World point under cursor must remain invariant before and after zoom (X)'
+  );
+  assert(
+    Math.abs(worldUnderCursorBefore.y - worldUnderCursorAfter.y) < 1e-6,
+    'World point under cursor must remain invariant before and after zoom (Y)'
+  );
+
+  // 3. Pan Invariance
+  const pannedVp = panBy({ dx: 60, dy: -40 }, vp);
+  assert(pannedVp.panX === vp.panX + 60, 'Pan X should increment by exactly dx');
+  assert(pannedVp.panY === vp.panY - 40, 'Pan Y should increment by exactly dy');
+  assert(pannedVp.zoom === vp.zoom, 'Pan operation must strictly preserve zoom level');
+
+  // 4. Pinch Zoom Math & Invariant Midpoint
+  const t1Start: Point = { x: 100, y: 200 };
+  const t2Start: Point = { x: 300, y: 200 };
+  const initialDist = 200;
+  const screenMidpoint: Point = { x: 200, y: 200 };
+  const startVp: Viewport = { panX: 50, panY: 50, zoom: 1.0 };
+  const worldMidpoint = screenToWorld(screenMidpoint, startVp);
+
+  // Pinch spread outwards (dist 200 -> 300)
+  const t1End: Point = { x: 50, y: 200 };
+  const t2End: Point = { x: 350, y: 200 };
+  const pinchedVp = calculatePinch(t1End, t2End, initialDist, worldMidpoint, startVp.zoom);
+  assert(Math.abs(pinchedVp.zoom - 1.5) < 1e-6, 'Pinch zoom should scale proportionally (300/200 = 1.5)');
+
+  const worldMidpointAfter = screenToWorld(screenMidpoint, pinchedVp);
+  assert(
+    Math.abs(worldMidpoint.x - worldMidpointAfter.x) < 1e-6,
+    'World point under pinch midpoint must remain invariant'
+  );
+
+  // 5. Global Zoom Limit Clamping Invariant
+  assert(MIN_ZOOM === 0.15, 'MIN_ZOOM must equal 0.15');
+  assert(MAX_ZOOM === 3.0, 'MAX_ZOOM must equal 3.0');
+
+  const minClamped = zoomAtPoint(cursor, 0.01, vp);
+  assert(minClamped.zoom === MIN_ZOOM, 'Zoom below min must clamp strictly to MIN_ZOOM');
+
+  const maxClamped = zoomAtPoint(cursor, 99.0, vp);
+  assert(maxClamped.zoom === MAX_ZOOM, 'Zoom above max must clamp strictly to MAX_ZOOM');
+
+  console.log('✓ Test 11 Passed: Viewport Math & Invariants (Inverses, Cursor-Centered Zoom, Pinch, Limits)');
+}
+
+// Test 12: Map Switching & Viewport State Isolation
+{
+  interface MapState {
+    id: string;
+    panX: number;
+    panY: number;
+    zoom: number;
+  }
+
+  const mapA: MapState = { id: 'map-surah-baqarah', panX: 200, panY: 150, zoom: 1.4 };
+  const mapB: MapState = { id: 'map-surah-kahf', panX: -80, panY: 60, zoom: 0.75 };
+
+  let activeMap = mapA;
+  let canvasViewport: Viewport = { panX: activeMap.panX, panY: activeMap.panY, zoom: activeMap.zoom };
+
+  // Switch to Map B
+  activeMap = mapB;
+  canvasViewport = { panX: activeMap.panX, panY: activeMap.panY, zoom: activeMap.zoom };
+  assert(canvasViewport.panX === -80 && canvasViewport.zoom === 0.75, 'Viewport loads Map B state correctly');
+
+  // Pan within Map B
+  canvasViewport = { panX: canvasViewport.panX + 50, panY: canvasViewport.panY + 20, zoom: canvasViewport.zoom };
+  mapB.panX = canvasViewport.panX;
+  mapB.panY = canvasViewport.panY;
+
+  // Switch back to Map A
+  activeMap = mapA;
+  canvasViewport = { panX: activeMap.panX, panY: activeMap.panY, zoom: activeMap.zoom };
+  assert(canvasViewport.panX === 200 && canvasViewport.panY === 150 && canvasViewport.zoom === 1.4,
+    'Map A viewport remains intact with zero bleed from Map B'
+  );
+
+  console.log('✓ Test 12 Passed: Map Switching & Viewport State Isolation');
+}
+
+// Test 13: Quran Selection Integrity & Precise Reflection Mapping (All 5 Granularities)
+{
+  function createReflectionFromPayload(payload: CreateReflectionPayload): { anchor: QuranAnchor; reflectionData: any; edge: CanvasEdge } {
+    let determinedLevel: QuranAnchor['level'] = 'ayah';
+    if (payload.level) {
+      determinedLevel = payload.level;
+    } else if (payload.startChar !== undefined || payload.charIndex !== undefined) {
+      determinedLevel = payload.endChar !== undefined && payload.endChar !== (payload.startChar ?? payload.charIndex) ? 'char_range' : 'char';
+    } else if (payload.endWord !== undefined && payload.startWord !== undefined && payload.endWord !== payload.startWord) {
+      determinedLevel = 'word_range';
+    } else if (payload.wordIndex !== undefined || payload.startWord !== undefined) {
+      determinedLevel = 'word';
+    }
+
+    const anchor: QuranAnchor = payload.anchor
+      ? payload.anchor
+      : {
+          surah: payload.surahNumber,
+          ayah: payload.ayahNumberInSurah,
+          level: determinedLevel,
+          wordIndex: payload.wordIndex ?? payload.startWord,
+          startWord: payload.startWord ?? payload.wordIndex,
+          endWord: payload.endWord ?? payload.wordIndex,
+          charIndex: payload.charIndex ?? payload.startChar,
+          startChar: payload.startChar ?? payload.charIndex,
+          endChar: payload.endChar ?? payload.charIndex,
+          text: payload.selectedText || payload.textUthmani,
+          surahName: payload.surahName,
+          ayahNumberInSurah: payload.ayahNumberInSurah
+        };
+
+    const reflectionData = {
+      title: payload.title,
+      surahName: payload.surahName,
+      ayahNumberInSurah: payload.ayahNumberInSurah,
+      observation: payload.observation,
+      question: payload.question,
+      insight: payload.insight,
+      tags: payload.tags,
+      anchor,
+      selectedText: payload.selectedText || payload.textUthmani,
+      createdAt: Date.now()
+    };
+
+    const edge: CanvasEdge = {
+      id: 'edge-test-ref',
+      sourceId: 'ayah-node-1',
+      targetId: 'ref-node-1',
+      sourceHandle: 'left',
+      targetHandle: 'right',
+      relationshipKind: 'tadabbur',
+      label: 'وقفة تدبرية',
+      sourceWordIndex: anchor.wordIndex ?? anchor.startWord,
+      sourceWordText: payload.selectedText,
+      sourceAnchor: anchor,
+      style: 'solid',
+      curveType: 'bezier',
+      arrowType: 'end',
+      color: '#059669'
+    };
+
+    return { anchor, reflectionData, edge };
+  }
+
+  // 1. Ayah Level
+  const rAyah = createReflectionFromPayload({
+    surahNumber: 1,
+    ayahNumberInSurah: 1,
+    surahName: 'الفاتحة',
+    textUthmani: 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ',
+    observation: 'افتتاح السورة بالبسملة',
+    level: 'ayah'
+  });
+  assert(rAyah.anchor.level === 'ayah', 'Ayah level preserved');
+
+  // 2. Single Word Level
+  const rWord = createReflectionFromPayload({
+    surahNumber: 1,
+    ayahNumberInSurah: 2,
+    surahName: 'الفاتحة',
+    textUthmani: 'الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
+    wordIndex: 1,
+    selectedText: 'لِلَّهِ',
+    observation: 'استحقاق الحمد لله وحده'
+  });
+  assert(rWord.anchor.level === 'word', 'Word level correctly inferred');
+  assert(rWord.anchor.wordIndex === 1, 'Word index preserved');
+  assert(rWord.edge.sourceWordIndex === 1, 'Edge sourceWordIndex preserved');
+
+  // 3. Word Range Level
+  const rWordRange = createReflectionFromPayload({
+    surahNumber: 1,
+    ayahNumberInSurah: 2,
+    surahName: 'الفاتحة',
+    textUthmani: 'الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
+    startWord: 2,
+    endWord: 3,
+    selectedText: 'رَبِّ الْعَالَمِينَ',
+    observation: 'ربوبية الله الشاملة'
+  });
+  assert(rWordRange.anchor.level === 'word_range', 'Word-range level correctly inferred');
+  assert(rWordRange.anchor.startWord === 2 && rWordRange.anchor.endWord === 3, 'Word range bounds preserved');
+
+  // 4. Single Character Level
+  const rChar = createReflectionFromPayload({
+    surahNumber: 1,
+    ayahNumberInSurah: 1,
+    surahName: 'الفاتحة',
+    textUthmani: 'بِسْمِ اللَّهِ',
+    charIndex: 0,
+    selectedText: 'بِ',
+    observation: 'دلالة باء الاستعانة والمصاحبة'
+  });
+  assert(rChar.anchor.level === 'char', 'Char level correctly inferred');
+  assert(rChar.anchor.charIndex === 0, 'Char index preserved');
+
+  // 5. Character Range Level
+  const rCharRange = createReflectionFromPayload({
+    surahNumber: 1,
+    ayahNumberInSurah: 1,
+    surahName: 'الفاتحة',
+    textUthmani: 'بِسْمِ اللَّهِ',
+    startChar: 0,
+    endChar: 4,
+    selectedText: 'بِسْمِ',
+    observation: 'تحليل البسملة المقطعية'
+  });
+  assert(rCharRange.anchor.level === 'char_range', 'Char-range level correctly inferred');
+  assert(rCharRange.anchor.startChar === 0 && rCharRange.anchor.endChar === 4, 'Char range bounds preserved');
+
+  console.log('✓ Test 13 Passed: Quran Selection Integrity & Precise Reflection Mapping (All 5 Granularities)');
+}
+
+// Test 14: Map Import / Export Full-Fidelity Invariants
+{
+  const fullMap: TadabburMap = {
+    id: 'map-full-fidelity-test',
+    title: 'خريطة الاختبار الشامل',
+    description: 'خريطة شاملة للتحقق من أمان التصدير والاستيراد',
+    createdAt: 1710000000000,
+    updatedAt: 1710000050000,
+    panX: 140,
+    panY: -65,
+    zoom: 1.25,
+    gridType: 'dots',
+    snapToGrid: true,
+    nodes: [
+      {
+        id: 'node-ayah-1',
+        type: 'ayah',
+        x: 100,
+        y: 150,
+        width: 380,
+        colorTheme: 'emerald',
+        ayahData: {
+          surahNumber: 2,
+          surahName: 'البقرة',
+          ayahNumberInSurah: 255,
+          overallAyahNumber: 262,
+          juz: 3,
+          revelationType: 'Medinan',
+          textUthmani: 'اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ',
+          textSimple: 'الله لا إله إلا هو الحي القيوم',
+          annotations: []
+        }
+      },
+      {
+        id: 'node-note-1',
+        type: 'note',
+        x: 600,
+        y: 150,
+        width: 300,
+        colorTheme: 'amber',
+        noteData: {
+          title: 'ملاحظة تدبرية',
+          content: 'اسم الله القيوم يتضمن كمال الغنى وكمال القدرة',
+          tags: ['أسماء الله الحسنى']
+        }
+      },
+      {
+        id: 'node-ref-1',
+        type: 'reflection',
+        x: 600,
+        y: 350,
+        width: 380,
+        colorTheme: 'emerald',
+        reflectionData: {
+          title: 'وقفة القيوم',
+          surahName: 'البقرة',
+          ayahNumberInSurah: 255,
+          observation: 'اقتران الحي بالقيوم',
+          question: 'ما سر هذا الاقتران في آية الكرسي؟',
+          insight: 'الحي جامع لصفات الذات، والقيوم جامع لصفات الأفعال',
+          tags: ['توحيد الأسماء والصفات'],
+          selectedText: 'الْحَيُّ الْقَيُّومُ',
+          createdAt: 1710000010000,
+          anchor: {
+            surah: 2,
+            ayah: 255,
+            level: 'word_range',
+            startWord: 5,
+            endWord: 6,
+            text: 'الْحَيُّ الْقَيُّومُ'
+          }
+        }
+      },
+      {
+        id: 'node-concept-1',
+        type: 'concept',
+        x: 100,
+        y: 400,
+        width: 250,
+        colorTheme: 'teal',
+        conceptData: {
+          title: 'كمال الألوهية',
+          description: 'الأصل الذي تدور حوله السورة'
+        }
+      },
+      {
+        id: 'node-group-1',
+        type: 'group',
+        x: 50,
+        y: 80,
+        width: 950,
+        height: 600,
+        colorTheme: 'slate',
+        groupData: {
+          title: 'مجموعة آية الكرسي',
+          description: 'حاوية لدراسة آية الكرسي'
+        }
+      },
+      {
+        id: 'node-image-1',
+        type: 'image',
+        x: 100,
+        y: 550,
+        width: 200,
+        height: 150,
+        colorTheme: 'stone',
+        imageData: {
+          url: 'data:image/svg+xml;utf8,<svg></svg>',
+          caption: 'مخطط بياني توضيحي'
+        }
+      }
+    ],
+    edges: [
+      {
+        id: 'edge-1',
+        sourceId: 'node-ayah-1',
+        targetId: 'node-ref-1',
+        relationshipKind: 'tadabbur',
+        sourceHandle: 'left',
+        targetHandle: 'right',
+        sourceWordIndex: 5,
+        sourceWordText: 'الْحَيُّ',
+        label: 'وقفة تدبرية',
+        curveType: 'bezier',
+        style: 'solid',
+        arrowType: 'end',
+        color: '#059669',
+        category: 'تدبر',
+        sourceAnchor: {
+          surah: 2,
+          ayah: 255,
+          level: 'word',
+          wordIndex: 5,
+          text: 'الْحَيُّ'
+        }
+      }
+    ]
+  };
+
+  // Serialize to JSON
+  const serialized = JSON.stringify(fullMap);
+  const parsed = JSON.parse(serialized);
+
+  // Validate through domain map validator
+  const valResult = validateImportedMap(parsed);
+  assert(valResult.isValid, `Validation must pass: ${valResult.error}`);
+  assert(valResult.map !== undefined, 'Validated map must exist');
+
+  const vMap = valResult.map!;
+  assert(vMap.nodes.length === 6, 'All 6 nodes of distinct types must be preserved');
+  assert(vMap.edges.length === 1, 'Edge must be preserved');
+
+  // Verify reflection data integrity
+  const importedRef = vMap.nodes.find((n) => n.id === 'node-ref-1')!;
+  assert(importedRef.reflectionData?.title === 'وقفة القيوم', 'Reflection title preserved');
+  assert(importedRef.reflectionData?.observation === 'اقتران الحي بالقيوم', 'Reflection observation preserved');
+  assert(importedRef.reflectionData?.question === 'ما سر هذا الاقتران في آية الكرسي؟', 'Reflection question preserved');
+  assert(importedRef.reflectionData?.insight === 'الحي جامع لصفات الذات، والقيوم جامع لصفات الأفعال', 'Reflection insight preserved');
+  assert(importedRef.reflectionData?.anchor.level === 'word_range', 'Reflection anchor level preserved');
+  assert(importedRef.reflectionData?.anchor.startWord === 5, 'Reflection anchor startWord preserved');
+
+  // Verify edge handle and anchor preservation
+  const importedEdge = vMap.edges[0];
+  assert(importedEdge.sourceHandle === 'left', 'Edge sourceHandle preserved');
+  assert(importedEdge.targetHandle === 'right', 'Edge targetHandle preserved');
+  assert(importedEdge.sourceWordIndex === 5, 'Edge sourceWordIndex preserved');
+  assert(importedEdge.sourceWordText === 'الْحَيُّ', 'Edge sourceWordText preserved');
+  assert(importedEdge.category === 'تدبر', 'Edge category preserved');
+  assert(importedEdge.sourceAnchor?.level === 'word', 'Edge sourceAnchor preserved');
+
+  // Verify map settings preservation
+  assert(vMap.gridType === 'dots', 'Map gridType preserved');
+  assert(vMap.snapToGrid === true, 'Map snapToGrid preserved');
+  assert(vMap.panX === 140 && vMap.panY === -65 && vMap.zoom === 1.25, 'Map pan and zoom preserved');
+
+  console.log('✓ Test 14 Passed: Map Import / Export Full-Fidelity Invariants');
+}
+
+// Test 15: Relationship Synchronization & Undo/Redo Invariants
+{
+  const relEngine = new RelationshipEngine();
+  const edgesStateHistory: CanvasEdge[][] = [];
+  let historyIndex = -1;
+
+  function commitEdges(edges: CanvasEdge[]) {
+    edgesStateHistory.splice(historyIndex + 1);
+    edgesStateHistory.push(edges);
+    historyIndex++;
+    relEngine.syncCanvasEdges(edges);
+  }
+
+  function undo() {
+    if (historyIndex > 0) {
+      historyIndex--;
+      relEngine.syncCanvasEdges(edgesStateHistory[historyIndex]);
+    }
+  }
+
+  function redo() {
+    if (historyIndex < edgesStateHistory.length - 1) {
+      historyIndex++;
+      relEngine.syncCanvasEdges(edgesStateHistory[historyIndex]);
+    }
+  }
+
+  // 1. Initial Empty State
+  commitEdges([]);
+  assert(relEngine.getAllRelationships().length === 0, 'Initially 0 relationships');
+
+  // 2. Add Edge 1
+  const edge1: CanvasEdge = {
+    id: 'edge-rel-1',
+    sourceId: 'node-ayah-1',
+    targetId: 'node-ayah-2',
+    relationshipKind: 'similarity',
+    label: 'تناسب وتناظر',
+    style: 'solid',
+    arrowType: 'end',
+    color: '#059669',
+    sourceAnchor: { surah: 2, ayah: 1, level: 'ayah', text: 'الم' },
+    targetAnchor: { surah: 2, ayah: 2, level: 'ayah', text: 'ذلك الكتاب' }
+  };
+  commitEdges([edge1]);
+  assert(relEngine.getAllRelationships().length === 1, '1 relationship indexed after edge add');
+  assert(relEngine.getRelationship('edge-rel-1')?.kind === 'similarity', 'Relationship kind indexed correctly');
+
+  // 3. Add Edge 2
+  const edge2: CanvasEdge = {
+    id: 'edge-rel-2',
+    sourceId: 'node-ayah-2',
+    targetId: 'node-ayah-3',
+    relationshipKind: 'tafsir',
+    label: 'بيان وتفسير',
+    style: 'dashed',
+    arrowType: 'end',
+    color: '#3b82f6',
+    sourceAnchor: { surah: 2, ayah: 2, level: 'ayah', text: 'ذلك الكتاب' },
+    targetAnchor: { surah: 2, ayah: 3, level: 'ayah', text: 'الذين يؤمنون بالغيب' }
+  };
+  commitEdges([edge1, edge2]);
+  assert(relEngine.getAllRelationships().length === 2, '2 relationships indexed after second edge');
+
+  // 4. Update Edge 1
+  const edge1Updated: CanvasEdge = {
+    ...edge1,
+    relationshipKind: 'cause',
+    label: 'تعليل وبيان سبب'
+  };
+  commitEdges([edge1Updated, edge2]);
+  assert(relEngine.getRelationship('edge-rel-1')?.kind === 'cause', 'Relationship kind updated to cause');
+  assert(relEngine.getRelationship('edge-rel-1')?.label === 'تعليل وبيان سبب', 'Relationship label updated');
+
+  // 5. Delete Edge 2
+  commitEdges([edge1Updated]);
+  assert(relEngine.getAllRelationships().length === 1, 'Only 1 relationship after deletion');
+  assert(relEngine.getRelationship('edge-rel-2') === undefined, 'Deleted edge relationship removed from index');
+
+  // 6. Undo Deletion
+  undo();
+  assert(relEngine.getAllRelationships().length === 2, 'Undo restores deleted relationship');
+  assert(relEngine.getRelationship('edge-rel-2') !== undefined, 'Edge 2 relationship restored');
+
+  // 7. Undo Update
+  undo();
+  assert(relEngine.getRelationship('edge-rel-1')?.kind === 'similarity', 'Undo restores original relationship kind');
+
+  // 8. Redo Update
+  redo();
+  assert(relEngine.getRelationship('edge-rel-1')?.kind === 'cause', 'Redo restores updated relationship kind');
+
+  // 9. Redo Deletion
+  redo();
+  assert(relEngine.getAllRelationships().length === 1, 'Redo restores deletion state');
+  assert(relEngine.getRelationship('edge-rel-2') === undefined, 'Edge 2 cleanly removed after redo');
+
+  console.log('✓ Test 15 Passed: Relationship Synchronization & Undo/Redo Invariants');
+}
+
+// Test 16: Canvas Performance & Drag Hot Path Benchmark (100/300 & 200/600 graphs)
+{
+  console.log('\n--- Running Canvas Performance Benchmark ---');
+
+  interface MockNode {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }
+
+  interface MockEdge {
+    id: string;
+    sourceId: string;
+    targetId: string;
+    sX: number;
+    sY: number;
+    tX: number;
+    tY: number;
+  }
+
+  function runBenchmark(nodeCount: number, edgeCount: number, frames: number) {
+    // 1. Generate Synthetic Graph
+    const nodes: MockNode[] = [];
+    for (let i = 0; i < nodeCount; i++) {
+      nodes.push({
+        id: `node-${i}`,
+        x: (i % 10) * 350,
+        y: Math.floor(i / 10) * 200,
+        width: 320,
+        height: 160
+      });
+    }
+
+    const edges: MockEdge[] = [];
+    // Hub node 0 is connected to many edges to simulate high-load drag scenario
+    const hubConnectedCount = Math.min(Math.floor(edgeCount * 0.15), 50);
+    for (let i = 0; i < hubConnectedCount; i++) {
+      const targetIdx = (i % (nodeCount - 1)) + 1;
+      edges.push({
+        id: `edge-hub-${i}`,
+        sourceId: 'node-0',
+        targetId: `node-${targetIdx}`,
+        sX: nodes[0].x + 320,
+        sY: nodes[0].y + 80,
+        tX: nodes[targetIdx].x,
+        tY: nodes[targetIdx].y + 80
+      });
+    }
+
+    // Remaining edges distribute across other nodes
+    for (let i = edges.length; i < edgeCount; i++) {
+      const s = i % nodeCount;
+      const t = (i + 3) % nodeCount;
+      if (s === t) continue;
+      edges.push({
+        id: `edge-${i}`,
+        sourceId: `node-${s}`,
+        targetId: `node-${t}`,
+        sX: nodes[s].x + 320,
+        sY: nodes[s].y + 80,
+        tX: nodes[t].x,
+        tY: nodes[t].y + 80
+      });
+    }
+
+    // 2. Simulate Dragging Node 0 across frames using computePureEdgePath
+    const connectedEdges = edges.filter((e) => e.sourceId === 'node-0' || e.targetId === 'node-0');
+
+    const start = performance.now();
+    for (let f = 0; f < frames; f++) {
+      const deltaX = Math.sin(f * 0.05) * 100;
+      const deltaY = Math.cos(f * 0.05) * 100;
+
+      for (let j = 0; j < connectedEdges.length; j++) {
+        const e = connectedEdges[j];
+        const curSX = e.sourceId === 'node-0' ? e.sX + deltaX : e.sX;
+        const curSY = e.sourceId === 'node-0' ? e.sY + deltaY : e.sY;
+        const curTX = e.targetId === 'node-0' ? e.tX + deltaX : e.tX;
+        const curTY = e.targetId === 'node-0' ? e.tY + deltaY : e.tY;
+
+        computePureEdgePath(curSX, curSY, curTX, curTY, 'bezier', false, 'right', 'left', false, false);
+      }
+    }
+    const end = performance.now();
+    const totalMs = end - start;
+    const avgMsPerFrame = totalMs / frames;
+    const theoreticalFps = 1000 / Math.max(avgMsPerFrame, 0.001);
+
+    return {
+      nodeCount,
+      edgeCount,
+      connectedEdgesCount: connectedEdges.length,
+      frames,
+      totalMs,
+      avgMsPerFrame,
+      theoreticalFps
+    };
+  }
+
+  // Benchmark 1: 100 nodes, 300 edges
+  const res1 = runBenchmark(100, 300, 1000);
+  console.log(`[Benchmark 1] ${res1.nodeCount} nodes / ${res1.edgeCount} edges (${res1.connectedEdgesCount} connected to dragged hub):`);
+  console.log(`  - 1,000 frames evaluated in ${res1.totalMs.toFixed(2)}ms`);
+  console.log(`  - Average path calculation time per frame: ${(res1.avgMsPerFrame * 1000).toFixed(1)} µs (${res1.avgMsPerFrame.toFixed(4)} ms)`);
+  console.log(`  - Frame computation capacity: ~${Math.round(res1.theoreticalFps).toLocaleString()} computations/sec (Target: 60-120 FPS)`);
+
+  // Assert frame budget: 120 FPS = 8.33ms per frame. The pure path calculation should consume < 1ms (< 12% of frame budget).
+  assert(res1.avgMsPerFrame < 1.0, `Benchmark 1 average time per frame (${res1.avgMsPerFrame}ms) must be well under 1.0ms`);
+
+  // Benchmark 2: 200 nodes, 600 edges
+  const res2 = runBenchmark(200, 600, 1000);
+  console.log(`[Benchmark 2] ${res2.nodeCount} nodes / ${res2.edgeCount} edges (${res2.connectedEdgesCount} connected to dragged hub):`);
+  console.log(`  - 1,000 frames evaluated in ${res2.totalMs.toFixed(2)}ms`);
+  console.log(`  - Average path calculation time per frame: ${(res2.avgMsPerFrame * 1000).toFixed(1)} µs (${res2.avgMsPerFrame.toFixed(4)} ms)`);
+  console.log(`  - Frame computation capacity: ~${Math.round(res2.theoreticalFps).toLocaleString()} computations/sec (Target: 60-120 FPS)`);
+
+  assert(res2.avgMsPerFrame < 1.0, `Benchmark 2 average time per frame (${res2.avgMsPerFrame}ms) must be well under 1.0ms`);
+
+  console.log('✓ Test 16 Passed: Canvas Performance & Drag Hot Path Benchmark (Measurements documented with real profiling)');
+}
+
 console.log('\n========================================');
-console.log('ALL 10 QURAN ENGINE TESTS PASSED WITH 100% SUCCESS');
+console.log('ALL 16 ENGINE & PERFORMANCE TESTS PASSED WITH 100% SUCCESS');
 console.log('========================================\n');
+

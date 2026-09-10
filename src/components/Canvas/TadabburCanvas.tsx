@@ -176,6 +176,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     wordText?: string;
     anchor?: QuranAnchor;
   } | null>(null);
+  const connectingSourceRef = useRef(connectingSource);
+  connectingSourceRef.current = connectingSource;
   const [pendingConnection, setPendingConnection] = useState<PendingConnectionData | null>(null);
 
   // Mini-map & Modals (MiniMap closed by default per clean workspace guidelines)
@@ -280,6 +282,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       }
 
       if (e.key === 'Escape') {
+        cancelCurrentInteraction();
         setSelectedNodeIds(new Set());
         setConnectingSource(null);
         setShowShortcutsHelp(false);
@@ -513,6 +516,44 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     }
   };
 
+  /**
+   * Resets all transient dragging/panning interactions gracefully without leaving the canvas
+   * stuck in an active drag state (handles pointercancel, touchcancel, Escape, blur).
+   */
+  const cancelCurrentInteraction = useCallback(() => {
+    if (interactionRef.current.rafId) {
+      cancelAnimationFrame(interactionRef.current.rafId);
+      interactionRef.current.rafId = null;
+    }
+
+    if (interactionRef.current.mode === 'dragging') {
+      clearTransientNodeTransforms(interactionRef.current.initialNodePositions.keys());
+    } else if (interactionRef.current.mode === 'panning') {
+      clearTransientPanTransforms();
+    }
+
+    interactionRef.current.mode = 'idle';
+    interactionRef.current.hasMoved = false;
+    cleanupDragGeometrySnapshots();
+
+    touchDataRef.current = {
+      active: false,
+      mode: 'none',
+      startTouches: [],
+      startPan: { x: 0, y: 0 },
+      startZoom: 1,
+      initialDistance: 0,
+      initialMidpoint: { x: 0, y: 0 },
+      worldMidpoint: { x: 0, y: 0 },
+      draggedNodeId: null,
+      initialNodePositions: new Map()
+    };
+
+    if (connectingSourceRef.current) {
+      setConnectingSource(null);
+    }
+  }, []);
+
   // Zoom centered on cursor position (Mouse Wheel) via ViewportEngine
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -640,13 +681,13 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     initDragGeometrySnapshots(initialPositions);
   };
 
-  // Global Mouse Move (RAF-batched transient visual updates, 0 React re-renders)
-  const handleMouseMove = (e: React.MouseEvent) => {
+  // Global Mouse / Pointer Move (RAF-batched transient visual updates, 0 React re-renders)
+  const handlePointerOrMouseMove = useCallback((clientX: number, clientY: number) => {
     // 1. If pulling connection wire, update wire in DOM directly
-    if (connectingSource && containerRef.current) {
+    if (connectingSourceRef.current && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
-      const cX = (e.clientX - rect.left - panRef.current.x) / zoomRef.current;
-      const cY = (e.clientY - rect.top - panRef.current.y) / zoomRef.current;
+      const cX = (clientX - rect.left - panRef.current.x) / zoomRef.current;
+      const cY = (clientY - rect.top - panRef.current.y) / zoomRef.current;
       mouseCanvasPosRef.current = { x: cX, y: cY };
 
       const wireUnderlay = document.getElementById('live-wire-underlay');
@@ -668,8 +709,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 
     // 2. If Canvas Panning is active
     if (interactionRef.current.mode === 'panning') {
-      const deltaX = e.clientX - interactionRef.current.startMouse.x;
-      const deltaY = e.clientY - interactionRef.current.startMouse.y;
+      const deltaX = clientX - interactionRef.current.startMouse.x;
+      const deltaY = clientY - interactionRef.current.startMouse.y;
       if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
         interactionRef.current.hasMoved = true;
       }
@@ -702,8 +743,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
 
     // 3. If Node Dragging is active
     if (interactionRef.current.mode === 'dragging' && !readOnly) {
-      const deltaX = (e.clientX - interactionRef.current.startMouse.x) / zoomRef.current;
-      const deltaY = (e.clientY - interactionRef.current.startMouse.y) / zoomRef.current;
+      const deltaX = (clientX - interactionRef.current.startMouse.x) / zoomRef.current;
+      const deltaY = (clientY - interactionRef.current.startMouse.y) / zoomRef.current;
 
       if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
         interactionRef.current.hasMoved = true;
@@ -723,10 +764,14 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       }
       return;
     }
+  }, [readOnly]);
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    handlePointerOrMouseMove(e.clientX, e.clientY);
   };
 
   // Mouse Up (Commits exactly ONE canonical state update and ONE history entry)
-  const handleMouseUp = () => {
+  const handleMouseUp = useCallback(() => {
     // 1. Complete Canvas Panning
     if (interactionRef.current.mode === 'panning') {
       if (interactionRef.current.rafId) {
@@ -793,7 +838,37 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       cleanupDragGeometrySnapshots();
       return;
     }
-  };
+  }, [onUpdateMap, pushToHistory, snap]);
+
+  // Window-level boundary robustness: ensures drag/pan finishes cleanly even if pointer leaves canvas/window
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (interactionRef.current.mode !== 'idle' || connectingSourceRef.current) {
+        handlePointerOrMouseMove(e.clientX, e.clientY);
+      }
+    };
+
+    const handleGlobalMouseUp = () => {
+      if (interactionRef.current.mode !== 'idle') {
+        handleMouseUp();
+      }
+    };
+
+    const handleGlobalBlur = () => {
+      if (interactionRef.current.mode !== 'idle') {
+        cancelCurrentInteraction();
+      }
+    };
+
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('blur', handleGlobalBlur);
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('blur', handleGlobalBlur);
+    };
+  }, [handlePointerOrMouseMove, handleMouseUp, cancelCurrentInteraction]);
 
   // ==========================================
   // MOBILE FIRST MULTI-TOUCH GESTURE ENGINE
@@ -1615,7 +1690,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
             e.currentTarget.releasePointerCapture(e.pointerId);
           }
         } catch {}
-        handleMouseUp();
+        cancelCurrentInteraction();
       }}
       onMouseDown={handleCanvasMouseDown}
       onMouseMove={handleMouseMove}

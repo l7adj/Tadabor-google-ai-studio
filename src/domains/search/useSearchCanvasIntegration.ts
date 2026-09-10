@@ -144,16 +144,33 @@ export function useSearchCanvasIntegration({
         newNodes.push(ayahNode);
       }
 
-      const isWordLevel = payload.wordIndex !== undefined;
-      const anchor: QuranAnchor = {
-        surah: payload.surahNumber,
-        ayah: payload.ayahNumberInSurah,
-        level: isWordLevel ? 'word' : 'ayah',
-        wordIndex: payload.wordIndex,
-        text: payload.selectedText || payload.textUthmani,
-        surahName: cleanSurahName(payload.surahName),
-        ayahNumberInSurah: payload.ayahNumberInSurah
-      };
+      let determinedLevel: QuranAnchor['level'] = 'ayah';
+      if (payload.level) {
+        determinedLevel = payload.level;
+      } else if (payload.startChar !== undefined || payload.charIndex !== undefined) {
+        determinedLevel = payload.endChar !== undefined && payload.endChar !== (payload.startChar ?? payload.charIndex) ? 'char_range' : 'char';
+      } else if (payload.endWord !== undefined && payload.startWord !== undefined && payload.endWord !== payload.startWord) {
+        determinedLevel = 'word_range';
+      } else if (payload.wordIndex !== undefined || payload.startWord !== undefined) {
+        determinedLevel = 'word';
+      }
+
+      const anchor: QuranAnchor = payload.anchor
+        ? payload.anchor
+        : {
+            surah: payload.surahNumber,
+            ayah: payload.ayahNumberInSurah,
+            level: determinedLevel,
+            wordIndex: payload.wordIndex ?? payload.startWord,
+            startWord: payload.startWord ?? payload.wordIndex,
+            endWord: payload.endWord ?? payload.wordIndex,
+            charIndex: payload.charIndex ?? payload.startChar,
+            startChar: payload.startChar ?? payload.charIndex,
+            endChar: payload.endChar ?? payload.charIndex,
+            text: payload.selectedText || payload.textUthmani,
+            surahName: cleanSurahName(payload.surahName),
+            ayahNumberInSurah: payload.ayahNumberInSurah
+          };
 
       // Create reflection card placed next to the ayah
       const reflectionNode: CanvasNode = {
@@ -164,13 +181,16 @@ export function useSearchCanvasIntegration({
         width: 380,
         colorTheme: 'emerald',
         reflectionData: {
+          title: payload.title,
           surahName: cleanSurahName(payload.surahName),
           ayahNumberInSurah: payload.ayahNumberInSurah,
           observation: payload.observation,
           question: payload.question,
           insight: payload.insight,
+          tags: payload.tags,
           anchor,
-          selectedText: payload.selectedText || payload.textUthmani
+          selectedText: payload.selectedText || payload.textUthmani,
+          createdAt: Date.now()
         }
       };
       newNodes.push(reflectionNode);
@@ -184,7 +204,8 @@ export function useSearchCanvasIntegration({
         targetHandle: 'right' as const,
         relationshipKind: 'tadabbur' as const,
         label: 'وقفة تدبرية',
-        sourceWordIndex: payload.wordIndex,
+        sourceWordIndex: anchor.wordIndex ?? anchor.startWord,
+        sourceWordText: payload.selectedText,
         sourceAnchor: anchor,
         style: 'solid' as const,
         curveType: 'bezier' as const,
