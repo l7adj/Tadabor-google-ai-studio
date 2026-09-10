@@ -43,7 +43,7 @@ export default function App() {
   useMapPersistence(maps);
 
   // 3. Search & Canvas Integration
-  const { addAyahToCanvas, addQuickAyahs } = useSearchCanvasIntegration({
+  const { addAyahToCanvas, addReflectionToCanvas, addQuickAyahs } = useSearchCanvasIntegration({
     currentMap,
     onUpdateMap: updateMap,
     onNotify: showToast
@@ -72,6 +72,7 @@ export default function App() {
       onImportMap={importMap}
       onApplyTemplate={applyTemplate}
       onAddAyahToCanvas={addAyahToCanvas}
+      onAddReflectionToCanvas={addReflectionToCanvas}
       onSelectQuickAyahs={addQuickAyahs}
       isSearchModalOpen={isSearchModalOpen}
       setIsSearchModalOpen={setIsSearchModalOpen}

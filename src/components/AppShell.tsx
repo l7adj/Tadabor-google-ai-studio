@@ -26,6 +26,15 @@ export interface AppShellProps {
   onImportMap: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onApplyTemplate: (template: MindMapTemplate, asNewMap: boolean) => void;
   onAddAyahToCanvas: (item: SearchResultItem, anchor?: QuranAnchor) => void;
+  onAddReflectionToCanvas?: (
+    item: SearchResultItem,
+    reflectionData: {
+      observation: string;
+      question: string;
+      insight: string;
+      action?: string;
+    }
+  ) => void;
   onSelectQuickAyahs: (items: SearchResultItem[], anchor?: QuranAnchor) => void;
   isSearchModalOpen: boolean;
   setIsSearchModalOpen: (open: boolean) => void;
@@ -52,6 +61,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   onImportMap,
   onApplyTemplate,
   onAddAyahToCanvas,
+  onAddReflectionToCanvas,
   onSelectQuickAyahs,
   isSearchModalOpen,
   setIsSearchModalOpen,
@@ -110,6 +120,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             onAddAyahToCanvas={(item) => {
               onAddAyahToCanvas(item);
             }}
+            onAddReflectionToCanvas={onAddReflectionToCanvas}
           />
         )}
 
@@ -129,6 +140,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               onAddAyahToCanvas={(item) => {
                 onAddAyahToCanvas(item);
               }}
+              onAddReflectionToCanvas={onAddReflectionToCanvas}
               onClose={() => setIsSearchModalOpen(false)}
               isModal={true}
             />

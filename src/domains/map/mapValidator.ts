@@ -9,6 +9,7 @@ export interface ValidationResult {
 const VALID_NODE_TYPES: Set<NodeType> = new Set([
   'ayah',
   'note',
+  'reflection',
   'concept',
   'group',
   'image'

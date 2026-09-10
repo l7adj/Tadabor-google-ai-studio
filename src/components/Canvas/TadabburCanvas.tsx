@@ -44,6 +44,7 @@ import {
 } from '../../types';
 import { AyahNodeCard } from './Nodes/AyahNodeCard';
 import { NoteNodeCard } from './Nodes/NoteNodeCard';
+import { ReflectionNodeCard } from './Nodes/ReflectionNodeCard';
 import { ImageNodeCard } from './Nodes/ImageNodeCard';
 import { ConceptNodeCard } from './Nodes/ConceptNodeCard';
 import { GroupNodeCard } from './Nodes/GroupNodeCard';
@@ -54,7 +55,16 @@ import { RelationConfigModal, PendingConnectionData } from './RelationConfigModa
 import {
   useQuranSelection,
   globalRelationshipEngine,
-  RelationshipEngine
+  RelationshipEngine,
+  screenToWorld,
+  worldToScreen,
+  zoomAtPoint,
+  panBy,
+  calculatePinch,
+  Viewport,
+  Point,
+  MIN_ZOOM,
+  MAX_ZOOM
 } from '../../engine';
 
 interface TadabburCanvasProps {
@@ -117,7 +127,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
   // Layer 3: Visual Interaction Refs (Mouse canvas pos lives in ref to prevent continuous canvas re-renders)
   const mouseCanvasPosRef = useRef({ x: 0, y: 0 });
 
-  // Multi-Touch Gesture Tracking (Mobile First Engine)
+  // Multi-Touch Gesture Tracking (Mobile First Viewport Engine)
   const touchDataRef = useRef<{
     active: boolean;
     mode: 'none' | 'pan' | 'pinch' | 'node';
@@ -126,6 +136,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     startZoom: number;
     initialDistance: number;
     initialMidpoint: { x: number; y: number };
+    worldMidpoint: { x: number; y: number };
     draggedNodeId: string | null;
     initialNodePositions: Map<string, { x: number; y: number }>;
   }>({
@@ -136,6 +147,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     startZoom: 1,
     initialDistance: 0,
     initialMidpoint: { x: 0, y: 0 },
+    worldMidpoint: { x: 0, y: 0 },
     draggedNodeId: null,
     initialNodePositions: new Map()
   });
@@ -307,6 +319,13 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
 
+  // Viewport Engine Mirror for high-frequency drift-free math
+  const viewportRef = useRef<Viewport>({ panX: pan.x, panY: pan.y, zoom });
+  useEffect(() => {
+    viewportRef.current = { panX: pan.x, panY: pan.y, zoom };
+  }, [pan.x, pan.y, zoom]);
+  const wheelTimeoutRef = useRef<number | null>(null);
+
   // =========================================================================
   // LAYER 3: TRANSIENT VISUAL TRANSFORM PIPELINE (GPU ACCELERATED & RAF BATCHED)
   // =========================================================================
@@ -383,41 +402,75 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     }
   };
 
+  // Applies a single composite transform to the unified Canvas World container
   const applyTransientPanTransforms = (panX: number, panY: number, zoomLevel: number) => {
-    const svgContent = document.getElementById('canvas-svg-content');
-    if (svgContent) {
-      svgContent.setAttribute('transform', `translate(${panX}, ${panY}) scale(${zoomLevel})`);
+    const worldEl = document.getElementById('canvas-world');
+    if (worldEl) {
+      worldEl.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`;
     }
-    const nodesContainer = document.getElementById('canvas-nodes-container');
-    if (nodesContainer) {
-      nodesContainer.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoomLevel})`;
+    if (containerRef.current) {
+      containerRef.current.style.backgroundPosition = `${panX}px ${panY}px`;
+      containerRef.current.style.backgroundSize = `${28 * zoomLevel}px ${28 * zoomLevel}px`;
     }
   };
 
   const clearTransientPanTransforms = () => {
-    const nodesContainer = document.getElementById('canvas-nodes-container');
-    if (nodesContainer) {
-      nodesContainer.style.transform = '';
+    const worldEl = document.getElementById('canvas-world');
+    if (worldEl) {
+      worldEl.style.transform = `translate3d(${panRef.current.x}px, ${panRef.current.y}px, 0) scale(${zoomRef.current})`;
+    }
+    if (containerRef.current) {
+      containerRef.current.style.backgroundPosition = `${panRef.current.x}px ${panRef.current.y}px`;
+      containerRef.current.style.backgroundSize = `${28 * zoomRef.current}px ${28 * zoomRef.current}px`;
     }
   };
 
-  // Zoom centered on cursor position (Mouse Wheel)
+  // Zoom centered on cursor position (Mouse Wheel) via ViewportEngine
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     if (!containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
+    const cursorPoint: Point = {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    };
 
-    const zoomFactor = e.deltaY < 0 ? 1.09 : 0.91;
-    const newZoom = Math.min(Math.max(Number((zoom * zoomFactor).toFixed(3)), 0.15), 3.0);
+    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+    const targetZoom = viewportRef.current.zoom * zoomFactor;
 
-    const newPanX = mouseX - (mouseX - pan.x) * (newZoom / zoom);
-    const newPanY = mouseY - (mouseY - pan.y) * (newZoom / zoom);
+    const nextViewport = zoomAtPoint(cursorPoint, targetZoom, viewportRef.current);
+    viewportRef.current = nextViewport;
 
-    setZoom(newZoom);
-    setPan({ x: Math.round(newPanX), y: Math.round(newPanY) });
+    // Immediate RAF update to single world transform (0 React re-renders during rapid scrolling)
+    if (!interactionRef.current.rafId) {
+      interactionRef.current.rafId = requestAnimationFrame(() => {
+        interactionRef.current.rafId = null;
+        applyTransientPanTransforms(
+          viewportRef.current.panX,
+          viewportRef.current.panY,
+          viewportRef.current.zoom
+        );
+      });
+    }
+
+    // Debounced commit to React state when wheel scrolling settles
+    if (wheelTimeoutRef.current) {
+      window.clearTimeout(wheelTimeoutRef.current);
+    }
+    wheelTimeoutRef.current = window.setTimeout(() => {
+      wheelTimeoutRef.current = null;
+      const finalVp = viewportRef.current;
+      setZoom(finalVp.zoom);
+      setPan({ x: finalVp.panX, y: finalVp.panY });
+      onUpdateMap({
+        ...currentMapRef.current,
+        panX: finalVp.panX,
+        panY: finalVp.panY,
+        zoom: finalVp.zoom,
+        updatedAt: Date.now()
+      });
+    }, 150);
   };
 
   // Canvas Mouse Down
@@ -427,7 +480,8 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       isSpacePressed ||
       e.button === 1 ||
       e.target === containerRef.current ||
-      (e.target as HTMLElement).id === 'canvas-svg-layer'
+      (e.target as HTMLElement).id === 'canvas-svg-layer' ||
+      (e.target as HTMLElement).id === 'canvas-world'
     ) {
       interactionRef.current = {
         mode: 'panning',
@@ -530,10 +584,19 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
         interactionRef.current.hasMoved = true;
       }
+      const nextVp = panBy(
+        { dx: deltaX, dy: deltaY },
+        {
+          panX: interactionRef.current.initialPan.x,
+          panY: interactionRef.current.initialPan.y,
+          zoom: zoomRef.current
+        }
+      );
       interactionRef.current.transientPan = {
-        x: interactionRef.current.initialPan.x + deltaX,
-        y: interactionRef.current.initialPan.y + deltaY
+        x: nextVp.panX,
+        y: nextVp.panY
       };
+      viewportRef.current = nextVp;
 
       if (!interactionRef.current.rafId) {
         interactionRef.current.rafId = requestAnimationFrame(() => {
@@ -582,7 +645,15 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
         interactionRef.current.rafId = null;
       }
       if (interactionRef.current.hasMoved) {
-        setPan(interactionRef.current.transientPan);
+        const finalPan = interactionRef.current.transientPan;
+        setPan(finalPan);
+        onUpdateMap({
+          ...currentMapRef.current,
+          panX: finalPan.x,
+          panY: finalPan.y,
+          zoom: zoomRef.current,
+          updatedAt: Date.now()
+        });
       }
       clearTransientPanTransforms();
       interactionRef.current.mode = 'idle';
@@ -639,22 +710,28 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
   // ==========================================
   const handleCanvasTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
-      // 2-Finger Pinch Zoom + Pan
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-      const mid = {
-        x: (t1.clientX + t2.clientX) / 2,
-        y: (t1.clientY + t2.clientY) / 2
+      // 2-Finger Pinch Zoom + Pan (Drift-free, anchored to world coordinates)
+      const t1 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      const t2 = { x: e.touches[1].clientX, y: e.touches[1].clientY };
+      const dist = Math.hypot(t1.x - t2.x, t1.y - t2.y);
+      const rect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+      const mid: Point = {
+        x: (t1.x + t2.x) / 2 - rect.left,
+        y: (t1.y + t2.y) / 2 - rect.top
       };
+
+      const startVp = viewportRef.current;
+      const worldMid = screenToWorld(mid, startVp);
+
       touchDataRef.current = {
         active: true,
         mode: 'pinch',
-        startTouches: [{ x: t1.clientX, y: t1.clientY }, { x: t2.clientX, y: t2.clientY }],
-        startPan: { ...panRef.current },
-        startZoom: zoomRef.current,
+        startTouches: [t1, t2],
+        startPan: { x: startVp.panX, y: startVp.panY },
+        startZoom: startVp.zoom,
         initialDistance: dist,
         initialMidpoint: mid,
+        worldMidpoint: worldMid,
         draggedNodeId: null,
         initialNodePositions: new Map()
       };
@@ -669,11 +746,16 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
         startZoom: zoomRef.current,
         initialDistance: 0,
         initialMidpoint: { x: 0, y: 0 },
+        worldMidpoint: { x: 0, y: 0 },
         draggedNodeId: null,
         initialNodePositions: new Map()
       };
       // Clear selection if tapping canvas background in select mode
-      if (e.target === containerRef.current || (e.target as HTMLElement).id === 'canvas-svg-layer') {
+      if (
+        e.target === containerRef.current ||
+        (e.target as HTMLElement).id === 'canvas-svg-layer' ||
+        (e.target as HTMLElement).id === 'canvas-world'
+      ) {
         setSelectedNodeIds(new Set());
         if (connectingSource) setConnectingSource(null);
       }
@@ -723,6 +805,7 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       startZoom: zoomRef.current,
       initialDistance: 0,
       initialMidpoint: { x: 0, y: 0 },
+      worldMidpoint: { x: 0, y: 0 },
       draggedNodeId: node.id,
       initialNodePositions: initialPositions
     };
@@ -734,38 +817,26 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     if (e.touches.length === 2 && touchDataRef.current.mode === 'pinch') {
       const t1 = e.touches[0];
       const t2 = e.touches[1];
-      const newDist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const rect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+      const curT1: Point = { x: t1.clientX - rect.left, y: t1.clientY - rect.top };
+      const curT2: Point = { x: t2.clientX - rect.left, y: t2.clientY - rect.top };
+
       if (touchDataRef.current.initialDistance <= 0) return;
 
-      const scaleChange = newDist / touchDataRef.current.initialDistance;
-      const targetZoom = Math.min(
-        Math.max(Number((touchDataRef.current.startZoom * scaleChange).toFixed(3)), 0.15),
-        3.0
+      const nextVp = calculatePinch(
+        curT1,
+        curT2,
+        touchDataRef.current.initialDistance,
+        touchDataRef.current.worldMidpoint,
+        touchDataRef.current.startZoom
       );
 
-      const currentMid = {
-        x: (t1.clientX + t2.clientX) / 2,
-        y: (t1.clientY + t2.clientY) / 2
-      };
-
-      const startMid = touchDataRef.current.initialMidpoint;
-      const initialPan = touchDataRef.current.startPan;
-      const initialZoom = touchDataRef.current.startZoom;
-
-      const newPanX = currentMid.x - (startMid.x - initialPan.x) * (targetZoom / initialZoom);
-      const newPanY = currentMid.y - (startMid.y - initialPan.y) * (targetZoom / initialZoom);
-
-      touchDataRef.current.startPan = { x: Math.round(newPanX), y: Math.round(newPanY) };
-      touchDataRef.current.startZoom = targetZoom;
+      viewportRef.current = nextVp;
 
       if (!interactionRef.current.rafId) {
         interactionRef.current.rafId = requestAnimationFrame(() => {
           interactionRef.current.rafId = null;
-          applyTransientPanTransforms(
-            touchDataRef.current.startPan.x,
-            touchDataRef.current.startPan.y,
-            touchDataRef.current.startZoom
-          );
+          applyTransientPanTransforms(nextVp.panX, nextVp.panY, nextVp.zoom);
         });
       }
     } else if (e.touches.length === 1) {
@@ -813,15 +884,30 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
     }
 
     if (touchDataRef.current.mode === 'pinch') {
-      setZoom(touchDataRef.current.startZoom);
-      setPan(touchDataRef.current.startPan);
+      const finalVp = viewportRef.current;
+      setZoom(finalVp.zoom);
+      setPan({ x: finalVp.panX, y: finalVp.panY });
       clearTransientPanTransforms();
+      onUpdateMap({
+        ...currentMapRef.current,
+        panX: finalVp.panX,
+        panY: finalVp.panY,
+        zoom: finalVp.zoom,
+        updatedAt: Date.now()
+      });
     } else if (touchDataRef.current.mode === 'pan') {
       if (interactionRef.current.transientPan) {
         setPan(interactionRef.current.transientPan);
+        onUpdateMap({
+          ...currentMapRef.current,
+          panX: interactionRef.current.transientPan.x,
+          panY: interactionRef.current.transientPan.y,
+          updatedAt: Date.now()
+        });
       }
       clearTransientPanTransforms();
-    } else if (touchDataRef.current.mode === 'node' && touchDataRef.current.draggedNodeId) {
+    }
+ else if (touchDataRef.current.mode === 'node' && touchDataRef.current.draggedNodeId) {
       const { transientDelta } = interactionRef.current;
       const initialNodePositions = touchDataRef.current.initialNodePositions;
 
@@ -1567,232 +1653,257 @@ export const TadabburCanvas: React.FC<TadabburCanvasProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* TRADINGVIEW UNBOUNDED INFINITE WORLD VIEWPORT LAYER      */}
+      {/* UNIFIED CANVAS WORLD CONTAINER (Single Transform Root)   */}
       {/* ========================================================= */}
-
-      {/* SVG Layer for Edges and Active Drawing Wire (Layered at z-30 above cards so arrows and lines are completely visible) */}
-      <svg
-        id="canvas-svg-layer"
-        className="absolute inset-0 w-full h-full pointer-events-none z-30 overflow-visible"
-      >
-        <g id="canvas-svg-content" transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
-          {currentMap.edges.map((edge) => {
-            const sNode = currentMap.nodes.find((n) => n.id === edge.sourceId);
-            const tNode = currentMap.nodes.find((n) => n.id === edge.targetId);
-            if (!sNode || !tNode) return null;
-
-            return (
-              <EdgeRenderer
-                key={edge.id}
-                edge={edge}
-                sourceNode={sNode}
-                targetNode={tNode}
-                onUpdateEdge={(id, updates) => {
-                  const updated = currentMap.edges.map((e) => (e.id === id ? { ...e, ...updates } : e));
-                  onUpdateMap({ ...currentMap, edges: updated, updatedAt: Date.now() });
-                  pushToHistory(currentMap.nodes, updated);
-                }}
-                onDeleteEdge={(id) => {
-                  const updated = currentMap.edges.filter((e) => e.id !== id);
-                  onUpdateMap({ ...currentMap, edges: updated, updatedAt: Date.now() });
-                  pushToHistory(currentMap.nodes, updated);
-                }}
-                readOnly={readOnly}
-              />
-            );
-          })}
-
-          {/* Active Live Wire when pulling connection (Updated directly in DOM during cursor drag) */}
-          {connectingSource && (() => {
-            const srcNode = currentMap.nodes.find((n) => n.id === connectingSource.nodeId);
-            if (!srcNode) return null;
-            let sX = srcNode.x + (srcNode.width || 400) / 2;
-            let sY = srcNode.y + (srcNode.height || 200) / 2;
-            let isWord = false;
-            if (connectingSource.wordIndex !== undefined && srcNode.type === 'ayah') {
-              const anchor = getPreciseNodeAnchor(srcNode, 'top', connectingSource.wordIndex, 'center');
-              sX = anchor.x;
-              sY = anchor.y;
-              isWord = anchor.isWordAnchor;
-            } else if (connectingSource.handle) {
-              const anchor = getPreciseNodeAnchor(srcNode, connectingSource.handle);
-              sX = anchor.x;
-              sY = anchor.y;
-            }
-            const curX = mouseCanvasPosRef.current.x || sX;
-            const curY = mouseCanvasPosRef.current.y || sY;
-            return (
-              <g id="live-wire-group">
-                <line
-                  id="live-wire-underlay"
-                  x1={sX}
-                  y1={sY}
-                  x2={curX}
-                  y2={curY}
-                  stroke="rgba(255, 255, 255, 0.95)"
-                  strokeWidth={5}
-                />
-                <line
-                  id="live-wire-stroke"
-                  x1={sX}
-                  y1={sY}
-                  x2={curX}
-                  y2={curY}
-                  stroke={isWord ? '#e11d48' : '#10b981'}
-                  strokeWidth={2.5}
-                  strokeDasharray="6 4"
-                />
-                {isWord ? (
-                  <>
-                    <circle cx={sX} cy={sY} r={10} fill="#e11d48" fillOpacity={0.25} className="animate-ping" />
-                    <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#e11d48" strokeWidth={2} />
-                    <circle id="live-wire-head" cx={curX} cy={curY} r={7} fill="#e11d48" stroke="#ffffff" strokeWidth={1.5} />
-                  </>
-                ) : (
-                  <>
-                    <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#10b981" strokeWidth={2} />
-                    <circle id="live-wire-head" cx={curX} cy={curY} r={7} fill="#10b981" stroke="#ffffff" strokeWidth={1.5} />
-                  </>
-                )}
-              </g>
-            );
-          })()}
-        </g>
-      </svg>
-
-      {/* Nodes Container (GPU Accelerated, Infinite World Matrix) */}
       <div
-        id="canvas-nodes-container"
-        className="absolute inset-0 pointer-events-none z-20"
+        id="canvas-world"
+        className="absolute inset-0 pointer-events-none"
         style={{
           transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
-          transformOrigin: '0 0'
+          transformOrigin: '0 0',
+          willChange: 'transform'
         }}
       >
-        {/* Groups (Rendered at lower layer) */}
-        {currentMap.nodes
-          .filter((n) => n.type === 'group')
-          .map((node) => (
-            <div
-              key={node.id}
-              id={`node-card-${node.id}`}
-              onMouseDown={(e) => handleNodeMouseDown(node, e)}
-              onTouchStart={(e) => handleNodeTouchStart(node, e)}
-              className={`absolute pointer-events-auto transition-shadow z-5 ${
-                canvasMode === 'pan' ? 'cursor-grab' : 'cursor-move'
-              }`}
-              style={{
-                transform: `translate3d(${node.x}px, ${node.y}px, 0)`
-              }}
-            >
-              <GroupNodeCard
-                node={node}
-                isSelected={selectedNodeIds.has(node.id)}
-                onSelect={() => setSelectedNodeIds(new Set([node.id]))}
-                onDelete={handleDeleteNode}
-                onUpdateGroupData={(id, data) => {
-                  const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, groupData: data } : n));
-                  onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
+        {/* SVG Layer for Edges and Active Drawing Wire */}
+        <svg
+          id="canvas-svg-layer"
+          className="absolute inset-0 w-full h-full pointer-events-none z-30 overflow-visible"
+        >
+          <g id="canvas-svg-content">
+            {currentMap.edges.map((edge) => {
+              const sNode = currentMap.nodes.find((n) => n.id === edge.sourceId);
+              const tNode = currentMap.nodes.find((n) => n.id === edge.targetId);
+              if (!sNode || !tNode) return null;
+
+              return (
+                <EdgeRenderer
+                  key={edge.id}
+                  edge={edge}
+                  sourceNode={sNode}
+                  targetNode={tNode}
+                  onUpdateEdge={(id, updates) => {
+                    const updated = currentMap.edges.map((e) => (e.id === id ? { ...e, ...updates } : e));
+                    onUpdateMap({ ...currentMap, edges: updated, updatedAt: Date.now() });
+                    pushToHistory(currentMap.nodes, updated);
+                  }}
+                  onDeleteEdge={(id) => {
+                    const updated = currentMap.edges.filter((e) => e.id !== id);
+                    onUpdateMap({ ...currentMap, edges: updated, updatedAt: Date.now() });
+                    pushToHistory(currentMap.nodes, updated);
+                  }}
+                  readOnly={readOnly}
+                />
+              );
+            })}
+
+            {/* Active Live Wire when pulling connection (Updated directly in DOM during cursor drag) */}
+            {connectingSource && (() => {
+              const srcNode = currentMap.nodes.find((n) => n.id === connectingSource.nodeId);
+              if (!srcNode) return null;
+              let sX = srcNode.x + (srcNode.width || 400) / 2;
+              let sY = srcNode.y + (srcNode.height || 200) / 2;
+              let isWord = false;
+              if (connectingSource.wordIndex !== undefined && srcNode.type === 'ayah') {
+                const anchor = getPreciseNodeAnchor(srcNode, 'top', connectingSource.wordIndex, 'center');
+                sX = anchor.x;
+                sY = anchor.y;
+                isWord = anchor.isWordAnchor;
+              } else if (connectingSource.handle) {
+                const anchor = getPreciseNodeAnchor(srcNode, connectingSource.handle);
+                sX = anchor.x;
+                sY = anchor.y;
+              }
+              const curX = mouseCanvasPosRef.current.x || sX;
+              const curY = mouseCanvasPosRef.current.y || sY;
+              return (
+                <g id="live-wire-group">
+                  <line
+                    id="live-wire-underlay"
+                    x1={sX}
+                    y1={sY}
+                    x2={curX}
+                    y2={curY}
+                    stroke="rgba(255, 255, 255, 0.95)"
+                    strokeWidth={5}
+                  />
+                  <line
+                    id="live-wire-stroke"
+                    x1={sX}
+                    y1={sY}
+                    x2={curX}
+                    y2={curY}
+                    stroke={isWord ? '#e11d48' : '#10b981'}
+                    strokeWidth={2.5}
+                    strokeDasharray="6 4"
+                  />
+                  {isWord ? (
+                    <>
+                      <circle cx={sX} cy={sY} r={10} fill="#e11d48" fillOpacity={0.25} className="animate-ping" />
+                      <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#e11d48" strokeWidth={2} />
+                      <circle id="live-wire-head" cx={curX} cy={curY} r={7} fill="#e11d48" stroke="#ffffff" strokeWidth={1.5} />
+                    </>
+                  ) : (
+                    <>
+                      <circle cx={sX} cy={sY} r={5} fill="#ffffff" stroke="#10b981" strokeWidth={2} />
+                      <circle id="live-wire-head" cx={curX} cy={curY} r={7} fill="#10b981" stroke="#ffffff" strokeWidth={1.5} />
+                    </>
+                  )}
+                </g>
+              );
+            })()}
+          </g>
+        </svg>
+
+        {/* Nodes Container (Synchronized inside Canvas World) */}
+        <div
+          id="canvas-nodes-container"
+          className="absolute inset-0 pointer-events-none z-20"
+        >
+          {/* Groups (Rendered at lower layer) */}
+          {currentMap.nodes
+            .filter((n) => n.type === 'group')
+            .map((node) => (
+              <div
+                key={node.id}
+                id={`node-card-${node.id}`}
+                onMouseDown={(e) => handleNodeMouseDown(node, e)}
+                onTouchStart={(e) => handleNodeTouchStart(node, e)}
+                className={`absolute pointer-events-auto transition-shadow z-5 ${
+                  canvasMode === 'pan' ? 'cursor-grab' : 'cursor-move'
+                }`}
+                style={{
+                  transform: `translate3d(${node.x}px, ${node.y}px, 0)`
                 }}
-                onUpdateTheme={handleUpdateNodeTheme}
-                readOnly={readOnly}
-              />
-            </div>
-          ))}
-
-        {/* Content Cards (Ayah, Note, Concept, Image) */}
-        {currentMap.nodes
-          .filter((n) => n.type !== 'group')
-          .map((node) => (
-            <div
-              key={node.id}
-              id={`node-card-${node.id}`}
-              onMouseDown={(e) => handleNodeMouseDown(node, e)}
-              onTouchStart={(e) => handleNodeTouchStart(node, e)}
-              className={`absolute pointer-events-auto transition-shadow z-20 ${
-                canvasMode === 'pan' ? 'cursor-grab' : 'cursor-move'
-              }`}
-              style={{
-                transform: `translate3d(${node.x}px, ${node.y}px, 0)`
-              }}
-            >
-              {node.type === 'ayah' && (
-                <AyahNodeCard
+              >
+                <GroupNodeCard
                   node={node}
                   isSelected={selectedNodeIds.has(node.id)}
                   onSelect={() => setSelectedNodeIds(new Set([node.id]))}
                   onDelete={handleDeleteNode}
-                  onDuplicate={handleDuplicateNode}
-                  onUpdateAnnotations={handleUpdateAnnotations}
-                  onUpdateTafsir={handleUpdateTafsir}
-                  onUpdateTheme={handleUpdateNodeTheme}
-                  onUpdateDimensions={handleUpdateDimensions}
-                  onStartConnecting={handleStartConnecting}
-                  onCompleteConnecting={handleCompleteConnection}
-                  isConnectingMode={Boolean(connectingSource)}
-                  readOnly={readOnly}
-                  zoom={zoom}
-                />
-              )}
-
-              {node.type === 'note' && (
-                <NoteNodeCard
-                  node={node}
-                  isSelected={selectedNodeIds.has(node.id)}
-                  onSelect={() => setSelectedNodeIds(new Set([node.id]))}
-                  onDelete={handleDeleteNode}
-                  onDuplicate={handleDuplicateNode}
-                  onUpdateNoteData={(id, data) => {
-                    const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, noteData: data } : n));
+                  onUpdateGroupData={(id, data) => {
+                    const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, groupData: data } : n));
                     onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
-                    pushToHistory(updated, currentMap.edges);
                   }}
                   onUpdateTheme={handleUpdateNodeTheme}
-                  onStartConnecting={handleStartConnecting}
-                  onCompleteConnecting={handleCompleteConnection}
-                  isConnectingMode={Boolean(connectingSource)}
                   readOnly={readOnly}
                 />
-              )}
+              </div>
+            ))}
 
-              {node.type === 'concept' && (
-                <ConceptNodeCard
-                  node={node}
-                  isSelected={selectedNodeIds.has(node.id)}
-                  onSelect={() => setSelectedNodeIds(new Set([node.id]))}
-                  onDelete={handleDeleteNode}
-                  onDuplicate={handleDuplicateNode}
-                  onUpdateConceptData={(id, data) => {
-                    const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, conceptData: data } : n));
-                    onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
-                    pushToHistory(updated, currentMap.edges);
-                  }}
-                  onStartConnecting={handleStartConnecting}
-                  onCompleteConnecting={handleCompleteConnection}
-                  isConnectingMode={Boolean(connectingSource)}
-                  readOnly={readOnly}
-                />
-              )}
+          {/* Content Cards (Ayah, Reflection, Note, Concept, Image) */}
+          {currentMap.nodes
+            .filter((n) => n.type !== 'group')
+            .map((node) => (
+              <div
+                key={node.id}
+                id={`node-card-${node.id}`}
+                onMouseDown={(e) => handleNodeMouseDown(node, e)}
+                onTouchStart={(e) => handleNodeTouchStart(node, e)}
+                className={`absolute pointer-events-auto transition-shadow z-20 ${
+                  canvasMode === 'pan' ? 'cursor-grab' : 'cursor-move'
+                }`}
+                style={{
+                  transform: `translate3d(${node.x}px, ${node.y}px, 0)`
+                }}
+              >
+                {node.type === 'ayah' && (
+                  <AyahNodeCard
+                    node={node}
+                    isSelected={selectedNodeIds.has(node.id)}
+                    onSelect={() => setSelectedNodeIds(new Set([node.id]))}
+                    onDelete={handleDeleteNode}
+                    onDuplicate={handleDuplicateNode}
+                    onUpdateAnnotations={handleUpdateAnnotations}
+                    onUpdateTafsir={handleUpdateTafsir}
+                    onUpdateTheme={handleUpdateNodeTheme}
+                    onUpdateDimensions={handleUpdateDimensions}
+                    onStartConnecting={handleStartConnecting}
+                    onCompleteConnecting={handleCompleteConnection}
+                    isConnectingMode={Boolean(connectingSource)}
+                    readOnly={readOnly}
+                    zoom={zoom}
+                  />
+                )}
 
-              {node.type === 'image' && (
-                <ImageNodeCard
-                  node={node}
-                  isSelected={selectedNodeIds.has(node.id)}
-                  onSelect={() => setSelectedNodeIds(new Set([node.id]))}
-                  onDelete={handleDeleteNode}
-                  onUpdateImageData={(id, data) => {
-                    const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, imageData: data } : n));
-                    onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
-                    pushToHistory(updated, currentMap.edges);
-                  }}
-                  onStartConnecting={handleStartConnecting}
-                  onCompleteConnecting={handleCompleteConnection}
-                  isConnectingMode={Boolean(connectingSource)}
-                  readOnly={readOnly}
-                />
-              )}
-            </div>
-          ))}
+                {node.type === 'reflection' && (
+                  <ReflectionNodeCard
+                    node={node}
+                    isSelected={selectedNodeIds.has(node.id)}
+                    onSelect={() => setSelectedNodeIds(new Set([node.id]))}
+                    onDelete={handleDeleteNode}
+                    onDuplicate={handleDuplicateNode}
+                    onUpdateReflectionData={(id, data) => {
+                      const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, reflectionData: data } : n));
+                      onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
+                      pushToHistory(updated, currentMap.edges);
+                    }}
+                    onUpdateTheme={handleUpdateNodeTheme}
+                    onStartConnecting={handleStartConnecting}
+                    onCompleteConnecting={handleCompleteConnection}
+                    isConnectingMode={Boolean(connectingSource)}
+                    readOnly={readOnly}
+                  />
+                )}
+
+                {node.type === 'note' && (
+                  <NoteNodeCard
+                    node={node}
+                    isSelected={selectedNodeIds.has(node.id)}
+                    onSelect={() => setSelectedNodeIds(new Set([node.id]))}
+                    onDelete={handleDeleteNode}
+                    onDuplicate={handleDuplicateNode}
+                    onUpdateNoteData={(id, data) => {
+                      const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, noteData: data } : n));
+                      onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
+                      pushToHistory(updated, currentMap.edges);
+                    }}
+                    onUpdateTheme={handleUpdateNodeTheme}
+                    onStartConnecting={handleStartConnecting}
+                    onCompleteConnecting={handleCompleteConnection}
+                    isConnectingMode={Boolean(connectingSource)}
+                    readOnly={readOnly}
+                  />
+                )}
+
+                {node.type === 'concept' && (
+                  <ConceptNodeCard
+                    node={node}
+                    isSelected={selectedNodeIds.has(node.id)}
+                    onSelect={() => setSelectedNodeIds(new Set([node.id]))}
+                    onDelete={handleDeleteNode}
+                    onDuplicate={handleDuplicateNode}
+                    onUpdateConceptData={(id, data) => {
+                      const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, conceptData: data } : n));
+                      onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
+                      pushToHistory(updated, currentMap.edges);
+                    }}
+                    onStartConnecting={handleStartConnecting}
+                    onCompleteConnecting={handleCompleteConnection}
+                    isConnectingMode={Boolean(connectingSource)}
+                    readOnly={readOnly}
+                  />
+                )}
+
+                {node.type === 'image' && (
+                  <ImageNodeCard
+                    node={node}
+                    isSelected={selectedNodeIds.has(node.id)}
+                    onSelect={() => setSelectedNodeIds(new Set([node.id]))}
+                    onDelete={handleDeleteNode}
+                    onUpdateImageData={(id, data) => {
+                      const updated = currentMap.nodes.map((n) => (n.id === id ? { ...n, imageData: data } : n));
+                      onUpdateMap({ ...currentMap, nodes: updated, updatedAt: Date.now() });
+                      pushToHistory(updated, currentMap.edges);
+                    }}
+                    onStartConnecting={handleStartConnecting}
+                    onCompleteConnecting={handleCompleteConnection}
+                    isConnectingMode={Boolean(connectingSource)}
+                    readOnly={readOnly}
+                  />
+                )}
+              </div>
+            ))}
+        </div>
       </div>
 
       {/* Bottom Right Mini-Map (Hidden by default on mobile) */}

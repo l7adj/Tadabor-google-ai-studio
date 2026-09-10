@@ -26,6 +26,7 @@ function getNodeHeight(node: CanvasNode): number {
   if (node.height) return node.height;
   if (node.type === 'group') return 400;
   if (node.type === 'ayah') return 220;
+  if (node.type === 'reflection') return 220;
   if (node.type === 'note') return 180;
   if (node.type === 'concept') return 140;
   return 180;

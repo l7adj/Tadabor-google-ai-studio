@@ -90,7 +90,7 @@ export interface SearchResponse {
 }
 
 // Mind Map & Canvas types
-export type NodeType = 'ayah' | 'note' | 'image' | 'concept' | 'group';
+export type NodeType = 'ayah' | 'note' | 'reflection' | 'image' | 'concept' | 'group';
 
 export type QuranAnchorLevel =
   | 'surah'        // سورة كاملة
@@ -195,6 +195,19 @@ export interface NoteNodeData {
   referenceText?: string;
 }
 
+export interface ReflectionNodeData {
+  title?: string;
+  observation: string;      // ماذا لاحظت في الموضع القرآني؟
+  question?: string;         // ما السؤال أو التساؤل الذي أثارته الآية؟
+  insight?: string;          // الهداية أو الفائدة التدبرية
+  tags?: string[];
+  anchor: QuranAnchor;       // الموضع القرآني المرتبط بالوقفة
+  selectedText?: string;     // النص القرآني المحدد
+  surahName?: string;
+  ayahNumberInSurah?: number;
+  createdAt?: number;
+}
+
 export interface ImageNodeData {
   url: string;
   caption: string;
@@ -227,6 +240,7 @@ export interface CanvasNode {
   zIndex?: number;
   ayahData?: AyahNodeData;
   noteData?: NoteNodeData;
+  reflectionData?: ReflectionNodeData;
   imageData?: ImageNodeData;
   conceptData?: ConceptNodeData;
   groupData?: GroupNodeData;

@@ -18,3 +18,6 @@ export * from './quran/useQuranSelection';
 export * from './relationship/QuranRelationship';
 export * from './relationship/RelationshipValidator';
 export * from './relationship/RelationshipEngine';
+
+// Infinite 2D Viewport Engine
+export * from './viewport/ViewportEngine';

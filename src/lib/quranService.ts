@@ -616,3 +616,40 @@ export function getOverallAyahNumber(
   const ayah = surah?.ayahs.find((a) => a.numberInSurah === ayahNumberInSurah);
   return ayah?.number;
 }
+
+export interface AyahContextData {
+  surah: SurahData;
+  targetAyah: AyahData;
+  previousAyahs: AyahData[];
+  nextAyahs: AyahData[];
+}
+
+/**
+ * Returns the contextual neighborhood for an Ayah within its Surah
+ */
+export async function getAyahContext(
+  surahNumber: number,
+  ayahNumberInSurah: number,
+  contextWindow = 2
+): Promise<AyahContextData | null> {
+  const corpus = await loadQuranCorpus();
+  const surah = corpus.surahs.find((s) => s.number === surahNumber);
+  if (!surah) return null;
+
+  const targetIdx = surah.ayahs.findIndex((a) => a.numberInSurah === ayahNumberInSurah);
+  if (targetIdx === -1) return null;
+
+  const targetAyah = surah.ayahs[targetIdx];
+  const startIdx = Math.max(0, targetIdx - contextWindow);
+  const endIdx = Math.min(surah.ayahs.length, targetIdx + contextWindow + 1);
+
+  const previousAyahs = surah.ayahs.slice(startIdx, targetIdx);
+  const nextAyahs = surah.ayahs.slice(targetIdx + 1, endIdx);
+
+  return {
+    surah,
+    targetAyah,
+    previousAyahs,
+    nextAyahs
+  };
+}

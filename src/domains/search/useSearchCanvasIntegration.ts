@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { TadabburMap, CanvasNode, SearchResultItem, QuranAnchor, WordAnnotation } from '../../types';
+import { TadabburMap, CanvasNode, CanvasEdge, SearchResultItem, QuranAnchor, WordAnnotation } from '../../types';
 import { cleanSurahName } from '../../lib/arabicUtils';
 
 export interface UseSearchCanvasIntegrationProps {
@@ -88,6 +88,118 @@ export function useSearchCanvasIntegration({
     [currentMap, onUpdateMap, onNotify]
   );
 
+  const addReflectionToCanvas = useCallback(
+    (
+      item: SearchResultItem,
+      reflectionData: {
+        observation: string;
+        question: string;
+        insight: string;
+        action?: string;
+      }
+    ) => {
+      // Find or create ayah node
+      const existingAyah = currentMap.nodes.find(
+        (n) =>
+          n.type === 'ayah' &&
+          n.ayahData?.surahNumber === item.surahNumber &&
+          n.ayahData?.ayahNumberInSurah === item.ayahNumberInSurah
+      );
+
+      let ayahNode = existingAyah;
+      const newNodes = [...currentMap.nodes];
+
+      if (!ayahNode) {
+        let newX = 140;
+        let newY = 140;
+        if (newNodes.length > 0) {
+          const lastNode = newNodes[newNodes.length - 1];
+          newX = lastNode.x + 30;
+          newY = lastNode.y + 160;
+          if (newY > 750) {
+            newY = 120;
+            newX = lastNode.x + 400;
+          }
+        }
+
+        ayahNode = {
+          id: `ayah-${item.overallAyahNumber}-${Date.now()}`,
+          type: 'ayah',
+          x: newX,
+          y: newY,
+          width: 380,
+          colorTheme: item.revelationType === 'Meccan' ? 'emerald' : 'amber',
+          ayahData: {
+            surahNumber: item.surahNumber,
+            surahName: cleanSurahName(item.surahName),
+            ayahNumberInSurah: item.ayahNumberInSurah,
+            overallAyahNumber: item.overallAyahNumber,
+            page: item.page,
+            juz: item.juz,
+            revelationType: item.revelationType,
+            textUthmani: item.textUthmani,
+            textSimple: item.textSimple,
+            annotations: []
+          }
+        };
+        newNodes.push(ayahNode);
+      }
+
+      // Create reflection card placed next to the ayah
+      const reflectionNode: CanvasNode = {
+        id: `reflection-${Date.now()}`,
+        type: 'reflection',
+        x: ayahNode.x + (ayahNode.width || 380) + 40,
+        y: ayahNode.y,
+        width: 380,
+        colorTheme: 'emerald',
+        reflectionData: {
+          surahName: cleanSurahName(item.surahName),
+          ayahNumberInSurah: item.ayahNumberInSurah,
+          observation: reflectionData.observation,
+          question: reflectionData.question,
+          insight: reflectionData.insight,
+          anchor: {
+            surah: item.surahNumber,
+            ayah: item.ayahNumberInSurah,
+            level: 'ayah',
+            text: item.textUthmani || item.textSimple,
+            surahName: cleanSurahName(item.surahName),
+            ayahNumberInSurah: item.ayahNumberInSurah
+          },
+          selectedText: item.textUthmani || item.textSimple
+        }
+      };
+      newNodes.push(reflectionNode);
+
+      // Connect ayah to reflection
+      const newEdge: CanvasEdge = {
+        id: `edge-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        sourceId: ayahNode.id,
+        targetId: reflectionNode.id,
+        sourceHandle: 'left' as const,
+        targetHandle: 'right' as const,
+        relationshipKind: 'tadabbur' as const,
+        label: 'وقفة تدبرية',
+        style: 'solid' as const,
+        curveType: 'bezier' as const,
+        arrowType: 'end' as const,
+        color: '#059669'
+      };
+
+      const updatedMap: TadabburMap = {
+        ...currentMap,
+        nodes: newNodes,
+        edges: [...currentMap.edges, newEdge],
+        updatedAt: Date.now()
+      };
+
+      onUpdateMap(updatedMap);
+      onNotify?.(`تمت إضافة وقفة تدبرية وربطها بسورة ${cleanSurahName(item.surahName)} [آية ${item.ayahNumberInSurah}]`);
+    },
+    [currentMap, onUpdateMap, onNotify]
+  );
+
   const addQuickAyahs = useCallback(
     (items: SearchResultItem[], anchor?: QuranAnchor) => {
       if (!items || items.length === 0) return;
@@ -102,6 +214,7 @@ export function useSearchCanvasIntegration({
 
   return {
     addAyahToCanvas,
+    addReflectionToCanvas,
     addQuickAyahs
   };
 }
